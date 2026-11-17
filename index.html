@@ -192,11 +192,12 @@ const st = {
   pos:null, speedMs:null, heading:null, lastFix:null,
   rule:{base:null, prevBase:null, conds:[]},
   mapLimit:null, mapLimitChangedAt:0,
-  reads:[], seen:{}, area:{kind:null, time:0}, lastEnd:0,
+  reads:[], seen:{}, odo:0, area:{kind:null, time:0}, lastEnd:0,
   wx:null,              // {wet:boolean, time}
   running:false
 };
 window.__signviewState = st;
+window.__signviewTest = {};
 
 /* ================= audio ================= */
 let actx = null, lastBeep = 0;
@@ -256,11 +257,13 @@ function vehicleMatches(who){
   if (who === 'car') return S.vehicle === 'car' || S.vehicle === 'trailer';
   return false;
 }
+function isIcy(){ return !!(st.wx && st.wx.icy && Date.now() - st.wx.time < 45 * 60000); }
 function condActive(c){
   if (!c) return true;
   const day = new Date().getDay();
   switch (c.type){
-    case 'time':  return inTime(c.from, c.to) && (!c.days || c.days.includes(day));
+    case 'time':  return (c.ranges || [[c.from, c.to]]).some(([f, t]) => inTime(f, t)) && (!c.days || c.days.includes(day));
+    case 'ice':   return isIcy();
     case 'days':  return c.days.includes(day);
     case 'wet':   return isWet();
     case 'night': return isNight();
@@ -272,7 +275,9 @@ const DAYN = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 function hm(m){ const h = Math.floor(m / 60), mm = m % 60; return mm ? h + ':' + String(mm).padStart(2, '0') : String(h); }
 function condText(c){
   switch (c.type){
-    case 'time': return (c.days ? DAYN[c.days[0]] + '–' + DAYN[c.days[c.days.length - 1]] + ' ' : '') + hm(c.from) + '–' + hm(c.to) + 'h';
+    case 'time': return (c.days ? DAYN[c.days[0]] + '–' + DAYN[c.days[c.days.length - 1]] + ' ' : '') +
+                        (c.ranges || [[c.from, c.to]]).map(([f, t]) => hm(f) + '–' + hm(t)).join(', ') + 'h';
+    case 'ice': return 'in snow/ice';
     case 'days': return DAYN[c.days[0]] + '–' + DAYN[c.days[c.days.length - 1]];
     case 'wet': return 'when wet';
     case 'night': return 'at night';
@@ -281,24 +286,28 @@ function condText(c){
     default: return 'with a plate I can\u2019t read (ignored)';
   }
 }
-const CONDICON = {time:'⏱', days:'📅', wet:'🌧', night:'🌙', unknown:'?'};
+const CONDICON = {time:'⏱', days:'📅', wet:'🌧', night:'🌙', ice:'❄', unknown:'?'};
 function condIcon(c){ return c.type === 'vehicle' ? ({heavy:'🚚', car:'🚗', trailer:'🚗+'}[c.who]) : CONDICON[c.type]; }
 
 /* weather (Open-Meteo, free, no key) */
 let wxBusy = false, wxLastPos = null, wxLastT = 0;
 async function maybeWeather(){
-  if (S.wet !== 'auto' || wxBusy || !st.pos) return;
+  if (wxBusy || !st.pos) return;
   const now = Date.now();
   if (wxLastPos && now - wxLastT < 10 * 60000 && haversine(wxLastPos, st.pos) < 10000) return;
   wxBusy = true; wxLastPos = st.pos; wxLastT = now;
   try {
     const u = 'https://api.open-meteo.com/v1/forecast?latitude=' + st.pos.lat.toFixed(3) + '&longitude=' + st.pos.lng.toFixed(3) +
-              '&current=precipitation,rain,showers,snowfall,weather_code&past_minutely_15=4&minutely_15=precipitation';
+              '&current=temperature_2m,precipitation,rain,showers,snowfall,weather_code&past_minutely_15=4&minutely_15=precipitation';
     const j = await (await fetch(u)).json();
     const c = j.current || {}, code = c.weather_code;
     const recent = ((j.minutely_15 && j.minutely_15.precipitation) || []).slice(0, 5).some(p => p > 0.05);
     const wetCode = (code >= 51 && code <= 67) || (code >= 71 && code <= 86) || code >= 95;
-    st.wx = {wet: (c.precipitation > 0.05) || (c.rain > 0) || (c.showers > 0) || wetCode || recent, time: Date.now()};
+    const wet = (c.precipitation > 0.05) || (c.rain > 0) || (c.showers > 0) || wetCode || recent;
+    const snowCode = (code >= 71 && code <= 77) || code === 85 || code === 86;
+    // snow or ice: snowing, or wet at around freezing, or below freezing
+    const icy = snowCode || c.snowfall > 0 || (c.temperature_2m != null && (c.temperature_2m <= 0 || (c.temperature_2m <= 3 && wet)));
+    st.wx = {wet, icy, temp: c.temperature_2m, time: Date.now()};
     render();
   } catch(e){ wxLastT = now - 8 * 60000; }   // retry in ~2 min
   wxBusy = false;
@@ -324,22 +333,37 @@ function defaultLimit(){
   }
 }
 const inTown = () => st.area.kind === 'town' || st.area.kind === 'calm';
-function cameraInfo(){
-  const r = st.rule;
-  const times = [r.base ? r.base.time : 0, r.endTime || 0].concat(r.conds.map(c => c.time));
-  const latest = Math.max.apply(null, times);
-  if (!latest) return null;
+/* The limit on screen comes from the latest sign post. If nothing on that post applies right now
+   (e.g. "80 when wet" in the dry, a lorry-only limit, or a time window that isn't on), the limit from
+   the posts before it still applies, so we fall back through them instead of blanking the display. */
+function evalRule(r, depth){
+  if (!r || depth > 4) return null;
+  if (r.pending && st.odo >= r.pending.atOdo){              // "in 300 m": that distance has now been driven
+    r.fallback = {base:r.base, conds:r.conds, fallback:r.fallback};
+    r.base = {value:r.pending.value, time:Date.now(), led:r.pending.led}; r.conds = []; r.pending = null;
+  }
   const active = r.conds.filter(c => condActive(c.cond));
   if (active.length){
     const best = active.reduce((a, b) => b.value < a.value ? b : a);
-    return {value:best.value, src:'sign', time:latest, cond:best.cond, led:best.led};
+    return {value:best.value, src:'sign', cond:best.cond, led:best.led};
   }
-  if (r.base){
+  const expired = r.base && r.base.untilOdo != null && st.odo > r.base.untilOdo;   // "auf 2 km" has been driven
+  if (r.base && !expired){
     const src = r.base.src || 'sign';
     const v = src === 'sign' ? r.base.value : (defaultLimit() != null ? defaultLimit() : r.base.value);
-    return {value:v, src, why:r.base.why, time:latest, cond:null, led:r.base.led};
+    return {value:v, src, why:r.base.why, cond:null, led:r.base.led, untilOdo:r.base.untilOdo};
   }
-  return {value:null, src:'sign', time:latest};   // only inactive conditional limits seen
+  return evalRule(r.fallback, depth + 1);
+}
+function cameraInfo(){
+  const r = st.rule;
+  const times = [r.base ? r.base.time : 0, r.endTime || 0, r.pending ? r.pending.time : 0].concat(r.conds.map(c => c.time));
+  let latest = Math.max.apply(null, times);
+  if (!latest && !r.fallback) return null;
+  const e = evalRule(r, 0);
+  if (!e) return {value:null, src:'sign', time:latest};
+  e.time = latest || Date.now();
+  return e;
 }
 function currentLimit(){
   // A sign that has been read stays on screen until another sign replaces it.
@@ -371,7 +395,7 @@ function render(){
       calm: 'Traffic-calmed area · walking pace',
       kfs: 'Expressway · ' + lim.value + ' unless lanes are separated',
       autobahn: noLimit ? 'Autobahn · no limit (130 advised)' : 'Autobahn · limit for your vehicle',
-      end: 'End of limit · general ' + areaName + ' limit',
+      end: areaName ? 'End of limit · general ' + areaName + ' limit' : 'End of restrictions · general limit applies',
       map: 'From map data'}[lim.src];
   } else {
     sign.classList.add('none'); sign.classList.remove('led'); $('limitVal').textContent = '–';
@@ -391,6 +415,8 @@ function render(){
         (c.cond.type === 'unknown' ? '' : c.cond.type === 'vehicle' && !vehicleMatches(c.cond.who) ? ' (not your vehicle)' : ' (not now)')).join(' · ');
     }
   }
+  if (!note && st.rule.pending) note = st.rule.pending.value + ' in ' + Math.max(0, Math.round((st.rule.pending.atOdo - st.odo) / 10) * 10) + ' m';
+  if (!note && lim && lim.untilOdo != null) note = 'for ' + Math.max(0, Math.round((lim.untilOdo - st.odo) / 100) / 10) + ' km more';
   $('condNote').textContent = note;
 
   // chips on the map: what the app currently believes
@@ -427,6 +453,7 @@ function onFix(p){
     const dt = (p.timestamp - prevFix.t) / 1000;
     if (dt > 0.5) spd = haversine(prevFix.pos, pos) / dt;
   }
+  if (prevFix && (c.accuracy == null || c.accuracy < 50)){ const step = haversine(prevFix.pos, pos); if (step < 300) st.odo += step; }
   prevFix = {pos, t:p.timestamp};
   st.speedMs = spd == null ? st.speedMs : (st.speedMs == null ? spd : st.speedMs * 0.4 + spd * 0.6);
   if (c.heading != null && !isNaN(c.heading) && (spd || 0) > 1.5) st.heading = c.heading;
@@ -571,8 +598,9 @@ function findCandidates(){
       if (mn > 0.55 * mx && mx > 110) light[i] = 1;
       if (mx < 75) dark[i] = 1;
       if (mx > 150) bright[i] = 1;          // white or amber LED digits
-      if (r > 150 && g > 110 && b < 0.55 * r && g >= 0.6 * r && g <= 1.02 * r) yel[i] = 1;   // traffic yellow
-      if (mx < 100 && (mx - mn) < 0.3 * mx + 12) stripe[i] = 1;                                  // black/dark grey
+      // traffic yellow, also in shade or dull light
+      if (r > 110 && g > 80 && b < 0.6 * r && g >= 0.55 * r && g <= 1.05 * r && (mx - mn) > 0.35 * mx) yel[i] = 1;
+      if (mx < 150 && (mx - mn) < 0.3 * mx + 15) stripe[i] = 1;                                  // black/dark grey (grey in bright sun)
       if (b > 80 && r < 0.45 * b && g < 0.78 * b) blue[i] = 1;                                      // sign blue (not pale sky)
     }
   }
@@ -623,9 +651,9 @@ function findCandidates(){
   }
   const sc = vw / PW;
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
-  return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, dark, PW, PH, sc) : [],
+  return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, PW, PH, sc) : [],
           blues: S.country === 'de' ? findBlueSigns(red0, blue, light, PW, PH, sc) : [],
-          ends: findEndSigns(red0, light, stripe, PW, PH, sc)};
+          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc)};
 }
 
 function blobs(mask, W, H, minW, minH){
@@ -656,19 +684,24 @@ function frac(mask, W, x0, y0, x1, y1){
 
 /* German town signs (Ortstafel): a yellow rectangle with black lettering.
    Sign 310 (entering): plain. Sign 311 (leaving): a red stripe from bottom-left to top-right. */
-function findTownSigns(d, red0, yel, dark, W, H, sc){
+function findTownSigns(d, red0, yel, mxa, W, H, sc){
   const both = new Uint8Array(W * H);
   for (let i = 0; i < both.length; i++) both[i] = yel[i] | red0[i];   // the red stripe can split the yellow in two
   const out = [];
   for (const b of blobs(both, W, H, 20, 8)){
-    const ar = b.w / b.h; if (ar < 1.3 || ar > 3.8 || b.w > W * 0.7) continue;
-    const yf = frac(yel, W, b.x0, b.y0, b.x1, b.y1); if (yf < 0.4 || yf > 0.97) continue;
+    const ar = b.w / b.h; if (ar < 0.9 || ar > 3.8 || b.w > W * 0.7) continue;     // (seen from the side a town sign looks narrower)
+    const yf = frac(yel, W, b.x0, b.y0, b.x1, b.y1); if (yf < 0.35 || yf > 0.97) continue;
     // all four corners yellow: a rectangle, not a yellow arrow-shaped direction sign
     const cw = b.w * 0.12, ch = b.h * 0.2;
     const corners = [[b.x0, b.y0], [b.x1 - cw, b.y0], [b.x0, b.y1 - ch], [b.x1 - cw, b.y1 - ch]]
       .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));        // (the red stripe reaches two corners)
     if (Math.min.apply(null, corners) < 0.35) continue;
-    const df = frac(dark, W, b.x0, b.y0, b.x1, b.y1); if (df < 0.03 || df > 0.45) continue;
+    // lettering: pixels clearly darker than the sign's own yellow (works in shade and when the text is blurred by distance)
+    let ys = 0, yn = 0, dn = 0;
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (yel[i]){ ys += mxa[i]; yn++; } }
+    const ymean = yn ? ys / yn : 200;
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (!yel[i] && !red0[i] && mxa[i] < ymean * 0.62) dn++; }
+    const df = dn / (b.w * b.h); if (df < 0.015 || df > 0.5) continue;
     // red stripe rising from left to right?
     const mid = (b.x0 + b.x1) / 2; let nl = 0, nr = 0, yl = 0, yr = 0;
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
@@ -754,22 +787,71 @@ function classifyBlue(c){
 
 /* End-of-limit signs (278 end of a limit, 282 end of all restrictions, also the end of a 30 zone):
    a white disc with a black border and diagonal stripes running from bottom-left to top-right. */
-function findEndSigns(red0, light, stripe, W, H, sc){
-  const out = [];
-  for (const b of blobs(stripe, W, H, 12, 12)){
-    const ar = b.w / b.h; if (ar < 0.75 || ar > 1.35 || b.w > W * 0.5) continue;
-    const fill = b.n / (b.w * b.h); if (fill < 0.12 || fill > 0.65) continue;
-    if (frac(red0, W, b.x0, b.y0, b.x1, b.y1) > 0.03) continue;
-    if (frac(light, W, b.x0 + b.w * 0.15, b.y0 + b.h * 0.15, b.x1 - b.w * 0.15, b.y1 - b.h * 0.15) < 0.3) continue;
-    // crossing the stripes (top-left to bottom-right) flips dark/light many times; along them it doesn't
-    const across = [], along = [];
-    for (let k = 0; k < 40; k++){
-      const t = 0.12 + 0.76 * k / 39, x = Math.round(b.x0 + t * (b.w - 1));
-      across.push(stripe[Math.round(b.y0 + t * (b.h - 1)) * W + x]);
-      along.push(stripe[Math.round(b.y1 - t * (b.h - 1)) * W + x]);
+function dilate(m, W, H){
+  const o = new Uint8Array(m.length);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++){
+    const i = y * W + x;
+    if (m[i] || m[i-1] || m[i+1] || m[i-W] || m[i+W] || m[i-W-1] || m[i-W+1] || m[i+W-1] || m[i+W+1]) o[i] = 1;
+  }
+  return o;
+}
+function findEndSigns(red0, stripe, mxa, mna, W, H, sc){
+  // The thin dark border of these signs is often broken up at a distance, and the stripes may not touch it:
+  // close small gaps first, then look for a round dark outline with stripes inside.
+  // Sign posts are grey too: remove long thin vertical runs so the post doesn't join onto the sign.
+  const st2 = stripe.slice();
+  for (let x = 0; x < W; x++){
+    let y = 0;
+    while (y < H){
+      if (!stripe[y * W + x]){ y++; continue; }
+      let e = y; while (e < H && stripe[e * W + x]) e++;
+      if (e - y > 24) for (let yy = y; yy < e; yy++){
+        let l = x, r = x; while (l > 0 && stripe[yy * W + l - 1] && x - l < 6) l--; while (r < W - 1 && stripe[yy * W + r + 1] && r - x < 6) r++;
+        if (r - l + 1 <= 5) st2[yy * W + x] = 0;
+      }
+      y = e;
     }
+  }
+  const sm = dilate(dilate(st2, W, H), W, H), out = [];      // also joins the separate stripes into one shape
+  for (const b of blobs(sm, W, H, 12, 12)){
+    const ar = b.w / b.h; if (ar < 0.55 || ar > 1.5 || b.w > W * 0.5) continue;     // round, or oval when seen at an angle
+    const fill = b.n / (b.w * b.h); if (fill < 0.05 || fill > 0.92) continue;   // (the gap-closing makes it look fuller)
+    if (frac(red0, W, b.x0, b.y0, b.x1, b.y1) > 0.03) continue;                     // a red ring means a speed sign
+    // a dark outline all the way round
+    const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, rx = b.w / 2 * 0.94, ry = b.h / 2 * 0.94;
+    let ring = 0; for (let k = 0; k < 36; k++){ const a = k * Math.PI / 18;
+      ring += sm[Math.round(cy + ry * Math.sin(a)) * W + Math.round(cx + rx * Math.cos(a))]; }
+    if (ring < 36 * 0.4) continue;
+    // inside: mostly white (judged relatively, so shade and bright sun both work)
+    let lt = 0, tot = 0;
+    for (let y = Math.round(b.y0 + b.h * 0.2); y <= Math.round(b.y1 - b.h * 0.2); y++)
+      for (let x = Math.round(b.x0 + b.w * 0.2); x <= Math.round(b.x1 - b.w * 0.2); x++){
+        const i = y * W + x; tot++; if (!stripe[i] && mna[i] > 0.6 * mxa[i] && mxa[i] > 95) lt++; }
+    if (!tot || lt / tot < 0.35) continue;
+    // crossing the stripes (top-left to bottom-right) flips dark/light many times; along them it doesn't
+    // Stripes are the darkest thing on the sign; a crossed-out number (278) is a lighter grey. Split between them per sign.
+    const vals = [];
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) vals.push(mxa[y * W + x]);
+    vals.sort((p, q) => p - q);
+    const darkV = vals[Math.floor(vals.length * 0.08)], lightV = vals[Math.floor(vals.length * 0.85)];
+    const thr = (darkV + lightV) / 2;
+    const isStripe = i => mxa[i] < thr && (mxa[i] - mna[i]) < 0.3 * mxa[i] + 15;
+    // (three parallel lines each way: one line can run exactly along a stripe edge)
     const flips = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
-    if (flips(across) < 6 || flips(along) > 3) continue;
+    let fa = 0, fl = 99;
+    for (const off of [-0.08, 0, 0.08]){
+      const across = [], along = [];
+      for (let k = 0; k < 40; k++){
+        const t = 0.14 + 0.72 * k / 39;
+        const xa = Math.round(b.x0 + (t + off) * (b.w - 1)), ya = Math.round(b.y0 + (t - off) * (b.h - 1));
+        const xl = Math.round(b.x0 + (t + off) * (b.w - 1)), yl = Math.round(b.y1 - (t + off) * (b.h - 1));
+        const ok = (x, y) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+        across.push(ok(xa, ya) ? (isStripe(ya * W + xa) ? 1 : 0) : 0);
+        along.push(ok(xl, yl) ? (isStripe(yl * W + xl) ? 1 : 0) : 0);
+      }
+      fa = Math.max(fa, flips(across)); fl = Math.min(fl, flips(along));
+    }
+    if (fa < 5 || fl > 4 || fa - fl < 3) continue;
     out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h});
   }
   return out.sort((a, b) => b.size - a.size).slice(0, 1);
@@ -976,8 +1058,11 @@ function parseVehicle(t){
   return null;
 }
 function mergeConds(list){
-  list = list.filter(c => c && c.type !== 'zone');
+  list = list.filter(c => c && c.type !== 'zone' && c.type !== 'info');     // "Zone", "Lärmschutz", "Schule"…: no condition
   if (!list.length) return null;
+  const extent = list.find(c => c.type === 'length' || c.type === 'ahead');
+  if (extent && list.every(c => c === extent || c.type === 'unknown')) return list.length === 1 ? extent : {type:'unknown'};
+  list = list.filter(c => c !== extent);
   // if one of the plates couldn't be read, the combination is uncertain: don't apply it
   if (list.length > 1 && list.some(c => c.type === 'unknown')) return {type:'unknown'};
   const veh = list.find(c => c.type === 'vehicle');
@@ -991,18 +1076,30 @@ function parsePlateText(raw){
   return mergeConds([parseVehicle(t), parseOther(t)]);
 }
 function parseOther(t){
-  if (/n[aä]ss|wet|rain|regen|pluie|nat\b|nedb/.test(t)) return {type:'wet'};
+  if (/n[aä]ss|wet|rain|regen|pluie|\bnat\b|nedb/.test(t)) return {type:'wet'};
+  if (/schnee|gl[aä]tte|\beis|snow|\bice\b|neige|verglas/.test(t)) return {type:'ice'};
   if (/nacht|night|nuit|notte/.test(t)) return {type:'night'};
   let days = null;
   const dm = t.match(/\b(mo|di|tu|mi|we|do|th|fr|sa|so|su|lu|ma|me|je|ve)\.?\s*-\s*(mo|di|tu|mi|we|do|th|fr|sa|so|su|lu|ma|me|je|ve)\b/);
   if (dm) days = dayRange(dm[1], dm[2]);
-  const tm = t.match(/(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?\s*(h|uhr)?/);
-  if (tm){
+  else if (/werktag/.test(t)) days = [1, 2, 3, 4, 5, 6];              // "werktags" = Monday to Saturday
+  // one or more time windows, e.g. "6-22h", "7-9h 16-18h", "6.30-18 h"
+  const ranges = [], re = /(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?\s*(h|uhr)?/g;
+  let tm;
+  while ((tm = re.exec(t))){
     const h1 = +tm[1], m1 = +(tm[2] || 0), h2 = +tm[3], m2 = +(tm[4] || 0);
-    if (h1 <= 24 && h2 <= 24 && m1 < 60 && m2 < 60 && !(h1 === h2 && m1 === m2))
-      return {type:'time', from:(h1 % 24) * 60 + m1, to:(h2 % 24) * 60 + m2, days: days || undefined};
+    if (h1 <= 24 && h2 <= 24 && m1 < 60 && m2 < 60 && !(h1 === h2 && m1 === m2)) ranges.push([(h1 % 24) * 60 + m1, (h2 % 24) * 60 + m2]);
   }
+  if (ranges.length) return {type:'time', from:ranges[0][0], to:ranges[0][1], ranges, days: days || undefined};
   if (days) return {type:'days', days};
+  // "auf 2 km": the limit applies for that distance. "300 m" / "in 300 m": it starts that far ahead.
+  let m = t.match(/auf\s*(\d+(?:[.,]\d+)?)\s*(km|m)\b/);
+  if (m) return {type:'length', m: parseFloat(m[1].replace(',', '.')) * (m[2] === 'km' ? 1000 : 1)};
+  m = t.match(/^\s*(?:in|nach)?\s*(\d+(?:[.,]\d+)?)\s*(km|m)\s*$/);
+  if (m) return {type:'ahead', m: parseFloat(m[1].replace(',', '.')) * (m[2] === 'km' ? 1000 : 1)};
+  // Plates that only give a reason (noise protection, school, children, road damage…): the limit applies at all times.
+  if (/l[aä]rm|schul|kinder|kita|altenheim|senior|unfall|sch[aä]den|luft|abgas|baustelle|krankenh|spielend|fu[sß]g[aä]ng|radfahr|noise|school/.test(t))
+    return {type:'info'};
   return null;
 }
 
@@ -1044,12 +1141,16 @@ async function readTownText(t){
   plctx.fillStyle = '#fff'; plctx.fillRect(0, 0, pcan.width, pcan.height);
   plctx.drawImage(video, t.x + t.w * 0.04, t.y + t.h * 0.06, t.w * 0.92, t.h * 0.88, pad, pad, W, H);
   const img = plctx.getImageData(0, 0, pcan.width, pcan.height), d = img.data, lum = new Uint8Array(d.length / 4);
+  const PWc = pcan.width, skip = new Uint8Array(lum.length), inner = [];
   for (let i = 0, q = 0; q < d.length; i++, q += 4){
-    const r = d[q], g = d[q+1], b = d[q+2];
-    lum[i] = (r > 90 && r > g * 1.5 && r > b * 1.3) ? 255 : Math.round(0.299 * r + 0.587 * g + 0.114 * b);   // red stripe -> background
+    const r = d[q], g = d[q+1], b = d[q+2], x = i % PWc, y = (i / PWc) | 0;
+    lum[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    // the red stripe and the white padding are background, and are kept out of the threshold
+    skip[i] = ((r > 70 && r > g * 1.5 && r > b * 1.3) || x < pad || y < pad || x >= pad + W || y >= pad + H) ? 1 : 0;
+    if (!skip[i]) inner.push(lum[i]);
   }
-  const thr = otsu(lum);
-  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = lum[i] <= thr ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
+  const thr = otsu(inner.length > 50 ? inner : lum);
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
   plctx.putImageData(img, 0, 0);
   try { return ((await plateWorker.recognize(pcan)).data.text || '').trim(); } catch(e){ return ''; }
 }
@@ -1063,7 +1164,7 @@ function looksLikeTownName(text){
 /* Town entered/left, or end-of-limit sign: these reset the limit to the general one. */
 function areaEvent(kind){
   const now = Date.now(), key = 'area:' + kind;
-  st.reads = st.reads.filter(r => now - r.t < 3500);
+  st.reads = st.reads.filter(r => now - r.t < 5000);
   st.reads.push({key, t:now, conf:0});
   if (st.reads.filter(r => r.key === key).length < 2) return;
   const R = st.rule;
@@ -1079,19 +1180,24 @@ function areaEvent(kind){
     if (now - st.lastEnd < 8000){ st.lastEnd = now; return; }
     st.lastEnd = now;
     const dv = defaultLimit();
-    R.base = dv != null ? {value:dv, time:now, src:'end'} : null;
+    // Not known whether we're in a town: show the end-of-restrictions symbol itself (no warning) instead of a number.
+    R.base = {value: dv != null ? dv : Infinity, time:now, src:'end'};
     R.endTime = now;
   }
-  R.conds = []; R.prevBase = null;
+  R.conds = []; R.prevBase = null; R.fallback = null; R.pending = null;
   render();
 }
 
+Object.assign(window.__signviewTest, {parsePlateText: t => parsePlateText(t), condActive: c => condActive(c), mergeConds: l => mergeConds(l),
+  accept: (v, conf, cond, led) => accept(v, conf, cond, led), current: () => currentLimit(), set: o => Object.assign(S, o)});
 /* ---------- combining reads ---------- */
 function condKey(c){
   if (!c) return 'none';
   if (c.type === 'time') return 'time' + c.from + '-' + c.to + (c.days || '');
   if (c.type === 'days') return 'days' + c.days;
   if (c.type === 'vehicle') return 'vehicle' + c.who + (c.label || '') + '/' + condKey(c.extra);
+  if (c.type === 'time') return 'time' + JSON.stringify(c.ranges || [[c.from, c.to]]) + (c.days || '');
+  if (c.type === 'length' || c.type === 'ahead') return c.type + Math.round(c.m);
   return c.type;
 }
 function accept(v, conf, cond, led){
@@ -1107,17 +1213,46 @@ function accept(v, conf, cond, led){
   if (!(same >= 2 || conf >= 82)) return;
   const R = st.rule;
   // Same sign as a conditional one we just read, but the plate under it is out of view or unreadable now.
-  const twin = R.conds.find(c => c.value === v && now - c.time < 4000 && c.cond.type !== 'unknown');
+  const twin = R.conds.find(c => c.value === v && now - c.time < 8000 && c.cond.type !== 'unknown');
   if (twin && (!cond || cond.type === 'unknown')){ twin.time = now; render(); return; }
   if (twin && cond.type === 'time' && !cond.days && twin.cond.type === 'time' && twin.cond.days &&
       twin.cond.from === cond.from && twin.cond.to === cond.to) cond = twin.cond;
+  const older = c => !samePost(c.time);
+  if (cond && cond.type === 'ahead'){                         // starts further on: keep showing the current limit until then
+    if (!R.pending || R.pending.value !== v) R.pending = {value:v, atOdo: st.odo + cond.m, time:now, led};
+    render(); return;
+  }
+  if (cond && cond.type === 'length'){                        // a plain limit that ends after a distance
+    if (!(R.base && R.base.value === v && R.base.untilOdo != null)){
+      R.fallback = {base:R.base, conds:R.conds.filter(older), fallback:R.fallback};
+      R.base = {value:v, time:now, led, untilOdo: st.odo + cond.m};
+      R.conds = R.conds.filter(c => samePost(c.time));
+    } else R.base.time = now;
+    render(); return;
+  }
   if (!cond){
     if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base.time = now; R.base.led = led; }
-    else { R.prevBase = R.base; R.base = {value:v, time:now, led}; }
-    R.conds = R.conds.filter(c => samePost(c.time));              // conditional limits from earlier posts end here
+    else { R.prevBase = R.base; R.prevFallback = R.fallback; R.prevConds = R.conds.filter(c => !samePost(c.time));
+           R.base = {value:v, time:now, led}; R.fallback = null; R.pending = null; }
+    R.conds = R.conds.filter(c => samePost(c.time));              // a new plain limit replaces everything before it
   } else {
     // The plate was too small to see on earlier reads: this sign was taken as a plain limit. Undo that.
-    if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base = R.prevBase; }
+    if (R.base && R.base.value === v && now - R.base.time < 6000){
+      // (if the plate can't be read and there's nothing before it to fall back to, keep showing the sign)
+      if (R.prevBase || R.prevFallback || cond.type !== 'unknown'){
+        // put back what applied before this sign (it turned out to be conditional)
+        R.base = R.prevBase; R.fallback = R.prevFallback || null;
+        if (R.prevConds && R.prevConds.length) R.fallback = {base:null, conds:R.prevConds, fallback:R.fallback};
+        R.prevBase = null; R.prevFallback = null; R.prevConds = null;
+      }
+      else { R.base.time = now; render(); return; }
+    }
+    // A new post with only conditional limits: what applied before still applies whenever these don't.
+    const olderConds = R.conds.filter(older), baseOlder = R.base && !samePost(R.base.time);
+    if (olderConds.length || baseOlder){
+      R.fallback = {base:R.base, conds:olderConds, fallback:R.fallback};
+      R.base = null;
+    }
     R.conds = R.conds.filter(c => samePost(c.time) && !(c.value === v && (c.cond.type === cond.type || c.cond.type === 'unknown')));
     R.conds.push({value:v, cond, time:now, led});
   }
