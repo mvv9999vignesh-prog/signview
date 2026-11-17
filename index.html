@@ -152,7 +152,8 @@
     <select id="setWet"><option value="auto">Auto</option><option value="on">Always wet</option><option value="off">Always dry</option></select></label>
   <label class="row"><span>Use map data for limits<small>OpenStreetMap limits when no sign has been read</small></span>
     <input type="checkbox" id="setOsm"></label>
-  <label class="row"><span>Show detection boxes<small>Green: sign read. Blue: plate under it. Yellow: candidate.</small></span>
+  <label class="row"><span>Show detection boxes<small>Green: sign read. Blue: plate. Orange: town sign. Purple: end sign. Yellow: found but not confirmed.
+    While this is on, tap the camera view to save a photo of what the camera sees.</small></span>
     <input type="checkbox" id="setDebug"></label>
   <label class="row keyrow"><span>Google Maps API key (optional)<small>Without a key you get the standard embedded Google Map, which
     re-centres every few hundred metres. With a key the map follows you smoothly.</small></span>
@@ -651,9 +652,9 @@ function findCandidates(){
   }
   const sc = vw / PW;
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
-  return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, PW, PH, sc) : [],
+  return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, blue, light, PW, PH, sc) : [],
           blues: S.country === 'de' ? findBlueSigns(red0, blue, light, PW, PH, sc) : [],
-          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc)};
+          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc)).slice(0, 2)};
 }
 
 function blobs(mask, W, H, minW, minH){
@@ -684,7 +685,23 @@ function frac(mask, W, x0, y0, x1, y1){
 
 /* German town signs (Ortstafel): a yellow rectangle with black lettering.
    Sign 310 (entering): plain. Sign 311 (leaving): a red stripe from bottom-left to top-right. */
-function findTownSigns(d, red0, yel, mxa, W, H, sc){
+// Red pixels lying along one straight line rising from left to right (the stripe through a town name).
+function redStripeFit(red0, W, b){
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, minx = 1, maxx = 0;
+  for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
+    const u = (x - b.x0) / b.w, v = (y - b.y0) / b.h;
+    n++; sx += u; sy += v; sxx += u * u; sxy += u * v; if (u < minx) minx = u; if (u > maxx) maxx = u;
+  }
+  if (n < Math.max(6, b.w * b.h * 0.004)) return false;
+  const den = n * sxx - sx * sx; if (den <= 0) return false;
+  const a = (n * sxy - sx * sy) / den, c = (sy - a * sx) / n;
+  let res = 0;
+  for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
+    const u = (x - b.x0) / b.w, v = (y - b.y0) / b.h, e = v - (a * u + c); res += e * e; }
+  const rms = Math.sqrt(res / n);
+  return a < -0.2 && a > -1.8 && rms < 0.09 && maxx - minx > 0.5;
+}
+function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
   const both = new Uint8Array(W * H);
   for (let i = 0; i < both.length; i++) both[i] = yel[i] | red0[i];   // the red stripe can split the yellow in two
   const out = [];
@@ -707,8 +724,11 @@ function findTownSigns(d, red0, yel, mxa, W, H, sc){
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
       if (x < mid){ nl++; yl += y; } else { nr++; yr += y; } }
     const area = b.w * b.h, rf = (nl + nr) / area;
-    const end = nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.2 && rf < 0.3;
+    const end = rf < 0.3 && (redStripeFit(red0, W, b) ||
+                (nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.12));
     if (!end && rf > 0.04) continue;          // lots of red but no stripe: not a town sign (e.g. a delivery van)
+    // Direction signs often carry blue motorway or white route-number panels; a town sign is only yellow and black.
+    if (!end && (frac(blue, W, b.x0, b.y0, b.x1, b.y1) > 0.008 || frac(light, W, b.x0, b.y0, b.x1, b.y1) > 0.04)) continue;
     out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, size:area});
   }
   return out.sort((a, b) => b.size - a.size).slice(0, 1);
@@ -787,6 +807,74 @@ function classifyBlue(c){
 
 /* End-of-limit signs (278 end of a limit, 282 end of all restrictions, also the end of a 30 zone):
    a white disc with a black border and diagonal stripes running from bottom-left to top-right. */
+/* Second way to find end-of-restriction signs: at a distance thin or grey stripes almost vanish,
+   and the sign is just a round white disc. Every candidate is then checked at full resolution. */
+// Sign posts are grey: remove long thin vertical runs so a post doesn't join onto the sign it carries.
+function withoutPosts(m, W, H){
+  const o = m.slice();
+  for (let x = 0; x < W; x++){
+    let y = 0;
+    while (y < H){
+      if (!m[y * W + x]){ y++; continue; }
+      let e = y; while (e < H && m[e * W + x]) e++;
+      if (e - y > 24) for (let yy = y; yy < e; yy++){
+        let l = x, r = x; while (l > 0 && m[yy * W + l - 1] && x - l < 6) l--; while (r < W - 1 && m[yy * W + r + 1] && r - x < 6) r++;
+        if (r - l + 1 <= 5) o[yy * W + x] = 0;
+      }
+      y = e;
+    }
+  }
+  return o;
+}
+function findWhiteDiscs(red0, light, yel, W, H, sc){
+  const out = [];
+  for (const b of blobs(withoutPosts(light, W, H), W, H, 12, 12)){
+    if (b.x0 === 0 || b.y0 === 0 || b.x1 === W - 1 || b.y1 === H - 1 || b.w > W * 0.4) continue;
+    const ar = b.w / b.h; if (ar < 0.55 || ar > 1.5) continue;
+    const fill = b.n / (b.w * b.h); if (fill < 0.5 || fill > 0.93) continue;     // a filled disc (corners empty)
+    // not the white centre of a red-ringed sign
+    const ex = Math.round(b.w * 0.25), ey = Math.round(b.h * 0.25);
+    if (frac(red0, W, Math.max(0, b.x0 - ex), Math.max(0, b.y0 - ey), Math.min(W - 1, b.x1 + ex), Math.min(H - 1, b.y1 + ey)) > 0.03) continue;
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h});
+  }
+  return out.sort((a, b) => b.size - a.size).slice(0, 2);
+}
+const ecan = document.createElement('canvas'), ectx = ecan.getContext('2d', {willReadFrequently:true});
+function confirmEndSign(c){
+  const S = 72; ecan.width = S; ecan.height = S;
+  ectx.drawImage(video, c.x, c.y, c.w, c.h, 0, 0, S, S);
+  const d = ectx.getImageData(0, 0, S, S).data, lum = new Float32Array(S * S), inDisc = new Uint8Array(S * S), vals = [];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++){
+    const i = y * S + x, p = i * 4, r = d[p], g = d[p+1], b = d[p+2];
+    lum[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    const u = (x - S / 2 + 0.5) / (S / 2), v = (y - S / 2 + 0.5) / (S / 2);
+    if (u * u + v * v < 0.72){ inDisc[i] = 1; vals.push(lum[i]);
+      if (r > 70 && r > g * 1.45 && r > b * 1.25) return false;          // red inside: not an end sign
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b); if (mx - mn > 0.35 * mx + 10) return false;   // coloured: not black/white
+    }
+  }
+  vals.sort((p, q) => p - q);
+  const white = vals[Math.floor(vals.length * 0.8)], darkest = vals[Math.floor(vals.length * 0.05)];
+  if (white < 90 || white - darkest < 22) return false;                   // too dark, or no contrast at all
+  const thr = white - Math.max(16, (white - darkest) * 0.4);              // stripes: clearly darker than the white
+  const isS = i => inDisc[i] && lum[i] < thr;
+  let sn = 0; for (let i = 0; i < S * S; i++) if (isS(i)) sn++;
+  const sf = sn / vals.length; if (sf < 0.04 || sf > 0.5) return false;
+  const flips = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
+  let fa = 0, fl = 99;
+  for (const off of [-0.08, 0, 0.08]){
+    const across = [], along = [];
+    for (let k = 0; k < 60; k++){
+      const t = 0.18 + 0.64 * k / 59;
+      const xa = Math.round((t + off) * (S - 1)), ya = Math.round((t - off) * (S - 1));
+      const xl = Math.round((t + off) * (S - 1)), yl = Math.round((1 - t - off) * (S - 1));
+      across.push(xa >= 0 && xa < S && ya >= 0 && ya < S && isS(ya * S + xa) ? 1 : 0);
+      along.push(xl >= 0 && xl < S && yl >= 0 && yl < S && isS(yl * S + xl) ? 1 : 0);
+    }
+    fa = Math.max(fa, flips(across)); fl = Math.min(fl, flips(along));
+  }
+  return fa >= 6 && fl <= 4 && fa - fl >= 4;
+}
 function dilate(m, W, H){
   const o = new Uint8Array(m.length);
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++){
@@ -798,20 +886,7 @@ function dilate(m, W, H){
 function findEndSigns(red0, stripe, mxa, mna, W, H, sc){
   // The thin dark border of these signs is often broken up at a distance, and the stripes may not touch it:
   // close small gaps first, then look for a round dark outline with stripes inside.
-  // Sign posts are grey too: remove long thin vertical runs so the post doesn't join onto the sign.
-  const st2 = stripe.slice();
-  for (let x = 0; x < W; x++){
-    let y = 0;
-    while (y < H){
-      if (!stripe[y * W + x]){ y++; continue; }
-      let e = y; while (e < H && stripe[e * W + x]) e++;
-      if (e - y > 24) for (let yy = y; yy < e; yy++){
-        let l = x, r = x; while (l > 0 && stripe[yy * W + l - 1] && x - l < 6) l--; while (r < W - 1 && stripe[yy * W + r + 1] && r - x < 6) r++;
-        if (r - l + 1 <= 5) st2[yy * W + x] = 0;
-      }
-      y = e;
-    }
-  }
+  const st2 = withoutPosts(stripe, W, H);
   const sm = dilate(dilate(st2, W, H), W, H), out = [];      // also joins the separate stripes into one shape
   for (const b of blobs(sm, W, H, 12, 12)){
     const ar = b.w / b.h; if (ar < 0.55 || ar > 1.5 || b.w > W * 0.5) continue;     // round, or oval when seen at an angle
@@ -1152,12 +1227,37 @@ async function readTownText(t){
   const thr = otsu(inner.length > 50 ? inner : lum);
   for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
   plctx.putImageData(img, 0, 0);
-  try { return ((await plateWorker.recognize(pcan)).data.text || '').trim(); } catch(e){ return ''; }
+  // Layout: rows of lettering, their heights and how centred they are.
+  const rows = []; let inRow = false, r0 = 0;
+  const rowDark = y => { let n = 0; for (let x = pad; x < pad + W; x++) if (d[(y * PWc + x) * 4] === 0) n++; return n; };
+  for (let y = pad; y <= pad + H; y++){
+    const on = y < pad + H && rowDark(y) > W * 0.02;
+    if (on && !inRow){ inRow = true; r0 = y; }
+    if (!on && inRow){ inRow = false; if (y - r0 >= 3) rows.push([r0, y - 1]); }
+  }
+  const bands = rows.map(([a, b]) => {
+    let l = PWc, r = 0;
+    for (let y = a; y <= b; y++) for (let x = pad; x < pad + W; x++) if (d[(y * PWc + x) * 4] === 0){ if (x < l) l = x; if (x > r) r = x; }
+    return {h: b - a + 1, left: (l - pad) / W, right: (pad + W - 1 - r) / W};
+  });
+  let text = '';
+  try { text = ((await plateWorker.recognize(pcan)).data.text || '').trim(); } catch(e){}
+  return {text, bands, H};
 }
-function looksLikeTownName(text){
-  const t = text.toLowerCase();
-  if (!/[a-zäöü]{3,}/.test(t)) return false;            // a place name has letters
-  if (/^\W*b\s*\d/.test(t) || /\b(dhl|post|taxi)\b/.test(t)) return false;   // B-road number plate, vans
+function looksLikeTownName(read, end){
+  const t = read.text.toLowerCase();
+  if (/\b(dhl|post|taxi)\b/.test(t) || /^\W*b\s*\d/.test(t)) return false;      // vans, B-road number plates
+  if (end) return true;                // the red stripe is strong evidence; the crossed-out name often reads badly
+  if (!/[a-zäöü]{3,}/.test(t)) return false;                                     // a place name has letters
+  // A town sign has no distances and no numbers; direction signs do ("Altdorf 12 km").
+  if (/\bkm\b/.test(t) || (t.match(/\d/g) || []).length >= 2) return false;
+  // Layout: one large, centred name, maybe a smaller line (district) under it. Direction boards have
+  // several rows of the same size, usually left-aligned next to arrows.
+  const b = read.bands.slice().sort((p, q) => q.h - p.h);
+  if (!b.length || b.length > 4) return false;
+  if (Math.abs(b[0].left - b[0].right) > 0.2) return false;
+  if (b[0].h > read.H * 0.5) return false;                   // one "row" this tall is really two rows run together
+  if (b.length >= 2 && b[0].h < b[1].h * 1.25) return false;
   return true;
 }
 
@@ -1278,9 +1378,9 @@ async function loop(){
     try {
       const found0 = findCandidates(), cands = found0.signs;
       for (const t of found0.towns){
-        const text = await readTownText(t);
-        const ok = looksLikeTownName(text);
-        if (ok){ areaEvent(t.end ? 'out' : 'in'); found.push({town: t.end ? 'out' : 'in', text}); }
+        const read = await readTownText(t);
+        const ok = looksLikeTownName(read, t.end);
+        if (ok){ areaEvent(t.end ? 'out' : 'in'); found.push({town: t.end ? 'out' : 'in', text: read.text}); }
         boxes.push(Object.assign({color: ok ? '#ff9f1c' : '#ffd166'}, t));
       }
       for (const bsign of found0.blues){
@@ -1293,7 +1393,12 @@ async function loop(){
         if (ok){ const ev = {autobahn:'ab', kfs:'kfs', calm:'calm'}[kind] + (bsign.end ? '_end' : ''); areaEvent(ev); found.push({blue: ev}); }
         boxes.push(Object.assign({color: ok ? '#4cc9f0' : '#ffd166'}, bsign));
       }
-      for (const e of found0.ends){ areaEvent('end'); found.push({end:true}); boxes.push(Object.assign({color:'#c77dff'}, e)); }
+      for (const e of found0.ends){
+        const ok = confirmEndSign(e);
+        if (ok){ areaEvent('end'); found.push({end:true}); }
+        boxes.push(Object.assign({color: ok ? '#c77dff' : '#ffd166'}, e));
+        if (ok) break;
+      }
       for (const c of cands){
         let res = await worker.recognize(prepareCrop(c, 0));
         let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
@@ -1320,6 +1425,24 @@ async function loop(){
   }
   setTimeout(loop, 150);
 }
+
+/* ================= photo for checking (detection boxes on: tap the camera view) ================= */
+$('camWrap').addEventListener('click', async () => {
+  if (!S.debug || !video.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+  if (!blob) return;
+  const name = 'signview-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.jpg';
+  const file = new File([blob], name, {type:'image/jpeg'});
+  const label = $('camState'), old = label.textContent;
+  try {
+    if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title:'SignView photo'});
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    label.textContent = 'photo saved';
+  } catch(e){ label.textContent = 'photo cancelled'; }
+  setTimeout(() => { label.textContent = old; }, 2000);
+});
 
 /* ================= start / settings UI ================= */
 async function start(){
