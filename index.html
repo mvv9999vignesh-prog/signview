@@ -342,12 +342,10 @@ function cameraInfo(){
   return {value:null, src:'sign', time:latest};   // only inactive conditional limits seen
 }
 function currentLimit(){
+  // A sign that has been read stays on screen until another sign replaces it.
+  // Map data is only used before any sign has been read (or while only a conditional limit is known that isn't in force).
   const cam = cameraInfo(), m = S.osm ? st.mapLimit : null;
-  if (cam && (!m || cam.time >= st.mapLimitChangedAt)){
-    if (cam.value != null) return cam;
-    if (m) return {value:m.value, src:'map', time:m.time, cond:null};   // conditional limit not in force: fall back
-    return null;
-  }
+  if (cam && cam.value != null) return cam;
   if (m) return {value:m.value, src:'map', time:m.time, cond:null};
   return null;
 }
@@ -387,7 +385,7 @@ function render(){
   if (lim && lim.cond) note = condIcon(lim.cond) + ' ' + condText(lim.cond) + ' · in force';
   else {
     const camT = cameraInfo();
-    if (camT && (!S.osm || !st.mapLimit || camT.time >= st.mapLimitChangedAt)){
+    if (camT){
       const idle = st.rule.conds.filter(c => !condActive(c.cond));
       if (idle.length) note = idle.map(c => c.value + ' ' + condText(c.cond) +
         (c.cond.type === 'unknown' ? '' : c.cond.type === 'vehicle' && !vehicleMatches(c.cond.who) ? ' (not your vehicle)' : ' (not now)')).join(' · ');
@@ -553,7 +551,7 @@ document.addEventListener('visibilitychange', async () => {
    - printed signs: light centre, dark numbers
    - electronic (LED) signs on motorways: dark centre, bright dotted numbers, red LED ring
    We find red ring-shaped blobs, classify the centre, read the numbers, then look for a plate below. */
-const PW = 360;
+const PW = 480;   // processing width: higher finds smaller / more distant signs
 function findCandidates(){
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return [];
@@ -562,11 +560,13 @@ function findCandidates(){
   pctx.drawImage(video, 0, 0, PW, PH);
   const d = pctx.getImageData(0, 0, PW, PH).data;
   const N = PW * PH, red0 = new Uint8Array(N), light = new Uint8Array(N), dark = new Uint8Array(N), bright = new Uint8Array(N);
-  const yel = new Uint8Array(N), stripe = new Uint8Array(N), blue = new Uint8Array(N);
+  const yel = new Uint8Array(N), stripe = new Uint8Array(N), blue = new Uint8Array(N), mxa = new Uint8Array(N), mna = new Uint8Array(N);
   for (let i = 0, p = 0; i < N; i++, p += 4){
     const r = d[p], g = d[p+1], b = d[p+2];
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    if (r > 80 && r > g * 1.55 && r > b * 1.35 && (mx - mn) > 0.33 * mx) red0[i] = 1;
+    mxa[i] = mx; mna[i] = mn;
+    // red ring: tolerant of faded, shaded and slightly orange/pink reds
+    if (r > 60 && r > g * 1.45 && r > b * 1.25 && (mx - mn) > 0.3 * mx) red0[i] = 1;
     else {
       if (mn > 0.55 * mx && mx > 110) light[i] = 1;
       if (mx < 75) dark[i] = 1;
@@ -586,10 +586,11 @@ function findCandidates(){
   let next = 1;
   for (let s = 0; s < N; s++){
     if (!mask[s] || lab[s]) continue;
-    let sp = 0, cnt = 0, x0 = PW, x1 = 0, y0 = PH, y1 = 0;
+    let sp = 0, cnt = 0, x0 = PW, x1 = 0, y0 = PH, y1 = 0, ringSum = 0, ringN = 0;
     stack[sp++] = s; lab[s] = next;
     while (sp){
       const i = stack[--sp], x = i % PW, y = (i / PW) | 0; cnt++;
+      if (red0[i]){ ringSum += mxa[i]; ringN++; }
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
       if (x > 0 && mask[i-1] && !lab[i-1]){ lab[i-1] = next; stack[sp++] = i-1; }
       if (x < PW-1 && mask[i+1] && !lab[i+1]){ lab[i+1] = next; stack[sp++] = i+1; }
@@ -599,14 +600,18 @@ function findCandidates(){
     next++;
     const w = x1 - x0 + 1, h = y1 - y0 + 1;
     if (w < 12 || h < 12 || w > PW * 0.6 || h > PH * 0.6) continue;
-    const ar = w / h; if (ar < 0.7 || ar > 1.45) continue;
+    const ar = w / h; if (ar < 0.6 || ar > 1.55) continue;          // allow signs seen at an angle
+    const ringMx = ringN ? ringSum / ringN : 120;
     const fill = cnt / (w * h); if (fill < 0.12 || fill > 0.7) continue;
     const cx0 = x0 + Math.round(w * 0.28), cx1 = x1 - Math.round(w * 0.28);
     const cy0 = y0 + Math.round(h * 0.28), cy1 = y1 - Math.round(h * 0.28);
     let tot = 0, red = 0, lt = 0, dk = 0, br = 0;
     for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++){
       const i = y * PW + x; tot++;
-      if (red0[i]) red++; else { if (light[i]) lt++; if (dark[i]) dk++; if (bright[i]) br++; }
+      // "white" is judged against the ring's own brightness, so signs in shade still count
+      if (red0[i]) red++; else {
+        if (mna[i] > 0.55 * mxa[i] && mxa[i] > 55 && mxa[i] >= ringMx * 0.85) lt++;
+        if (dark[i]) dk++; if (bright[i]) br++; }
     }
     if (!tot || red / tot > 0.15) continue;
     let kind = null;
@@ -792,25 +797,30 @@ function boxBlur(lum, W, H){
   return out;
 }
 
-function prepareCrop(c){
-  const ix = c.x + c.w * 0.16, iy = c.y + c.h * 0.22, iw = c.w * 0.68, ih = c.h * 0.56;
+function prepareCrop(c, variant){
+  // variant 1 is a slightly larger box, tried when the first read fails (angled or off-centre numbers)
+  const bx = variant ? [0.11, 0.17, 0.78, 0.66] : [0.16, 0.22, 0.68, 0.56];
+  const ix = c.x + c.w * bx[0], iy = c.y + c.h * bx[1], iw = c.w * bx[2], ih = c.h * bx[3];
   const H = 72, W = Math.max(40, Math.round(H * iw / ih)), pad = 16;
   crop.width = W + pad * 2; crop.height = H + pad * 2;
   cctx.fillStyle = c.kind === 'led' ? '#000' : '#fff'; cctx.fillRect(0, 0, crop.width, crop.height);
   cctx.drawImage(video, ix, iy, iw, ih, pad, pad, W, H);
   const img = cctx.getImageData(0, 0, crop.width, crop.height), d = img.data;
-  let lum = new Uint8Array(d.length / 4);
+  const CW = crop.width, CH = crop.height;
+  let lum = new Uint8Array(d.length / 4); const skip = new Uint8Array(d.length / 4);
   for (let i = 0, p = 0; p < d.length; i++, p += 4){
-    const r = d[p], g = d[p+1], b = d[p+2];
-    const isRed = r > 90 && r > g * 1.5 && r > b * 1.3;
+    const r = d[p], g = d[p+1], b = d[p+2], x = i % CW, y = (i / CW) | 0;
+    const isRed = r > 55 && r > g * 1.45 && r > b * 1.25;      // leftover ring (also dark/shaded red)
     let l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-    if (c.kind === 'led'){ l = isRed ? 255 : 255 - Math.max(r, g, b); }   // bright digits -> dark on light
-    else if (isRed) l = 255;
+    if (c.kind === 'led') l = 255 - Math.max(r, g, b);         // bright digits -> dark on light
     lum[i] = l;
+    // padding and ring remnants are background: left out of the threshold so a dim or shaded sign still splits cleanly
+    skip[i] = (isRed || x < pad || y < pad || x >= pad + W || y >= pad + H) ? 1 : 0;
   }
-  if (c.kind === 'led'){ lum = boxBlur(lum, crop.width, crop.height); lum = boxBlur(lum, crop.width, crop.height); }
-  const thr = otsu(lum);
-  for (let i = 0, p = 0; p < d.length; i++, p += 4){ const v = lum[i] <= thr ? 0 : 255; d[p] = d[p+1] = d[p+2] = v; d[p+3] = 255; }
+  if (c.kind === 'led'){ lum = boxBlur(lum, CW, CH); lum = boxBlur(lum, CW, CH); }
+  const inner = []; for (let i = 0; i < lum.length; i++) if (!skip[i]) inner.push(lum[i]);
+  const thr = otsu(inner.length > 50 ? inner : lum);
+  for (let i = 0, p = 0; p < d.length; i++, p += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[p] = d[p+1] = d[p+2] = v; d[p+3] = 255; }
   cctx.putImageData(img, 0, 0);
   return crop;
 }
@@ -966,7 +976,8 @@ function parseVehicle(t){
   return null;
 }
 function mergeConds(list){
-  list = list.filter(Boolean);
+  list = list.filter(c => c && c.type !== 'zone');
+  if (!list.length) return null;
   // if one of the plates couldn't be read, the combination is uncertain: don't apply it
   if (list.length > 1 && list.some(c => c.type === 'unknown')) return {type:'unknown'};
   const veh = list.find(c => c.type === 'vehicle');
@@ -976,6 +987,7 @@ function mergeConds(list){
 }
 function parsePlateText(raw){
   const t = raw.toLowerCase().replace(/[–—_]/g, '-').replace(/[|]/g, '1').replace(/\s+/g, ' ').trim();
+  if (/\b[z2]?[o0]n[e3]\b|\bzon/.test(t)) return {type:'zone'};      // Tempo-30-Zone sign (274.1): not a condition
   return mergeConds([parseVehicle(t), parseOther(t)]);
 }
 function parseOther(t){
@@ -1085,14 +1097,14 @@ function condKey(c){
 function accept(v, conf, cond, led){
   const now = Date.now();
   const key = v + '|' + condKey(cond);
-  st.reads = st.reads.filter(r => now - r.t < 3500);
+  st.reads = st.reads.filter(r => now - r.t < 5000);
   st.reads.push({key, t:now, conf});
   const same = st.reads.filter(r => r.key === key).length;
   // when did we start seeing this sign? Signs on the same post are seen at the same time.
   const sk = st.seen[key];
   if (!sk || now - sk.last > 1500) st.seen[key] = {first:now, last:now}; else sk.last = now;
   const first = st.seen[key].first, samePost = t => t >= first - 1000;
-  if (!(same >= 2 || conf >= 88)) return;
+  if (!(same >= 2 || conf >= 82)) return;
   const R = st.rule;
   // Same sign as a conditional one we just read, but the plate under it is out of view or unreadable now.
   const twin = R.conds.find(c => c.value === v && now - c.time < 4000 && c.cond.type !== 'unknown');
@@ -1148,8 +1160,12 @@ async function loop(){
       }
       for (const e of found0.ends){ areaEvent('end'); found.push({end:true}); boxes.push(Object.assign({color:'#c77dff'}, e)); }
       for (const c of cands){
-        const res = await worker.recognize(prepareCrop(c));
-        const v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+        let res = await worker.recognize(prepareCrop(c, 0));
+        let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+        if (!(v && VALID[S.unit].includes(v) && res.data.confidence >= 55)){
+          res = await worker.recognize(prepareCrop(c, 1));
+          v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+        }
         if (v && VALID[S.unit].includes(v) && res.data.confidence >= 55){
           let cond = null;
           if (c.kind === 'print'){
