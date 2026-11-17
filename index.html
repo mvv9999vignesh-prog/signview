@@ -1,0 +1,1215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SignView">
+<meta name="theme-color" content="#111418">
+<title>SignView</title>
+<style>
+  :root{
+    --bg:#111418; --panel:#1a1f26; --text:#f2f4f7; --muted:#9aa4b2;
+    --red:#d62828; --ok:#2e9d5b; --warn:#f2a900; --line:#2a313b;
+    --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;overflow:hidden;overscroll-behavior:none}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+
+  /* Top 3/4: map */
+  #mapPane{position:relative;flex:0 0 75%;background:#20262e;overflow:hidden}
+  #gmap,#gframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  #gframe{display:none}
+  #mapMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:24px;color:var(--muted);font-size:15px;line-height:1.4;pointer-events:none}
+  .fab{position:absolute;right:12px;width:44px;height:44px;border-radius:22px;border:0;
+    background:rgba(17,20,24,.82);color:var(--text);font-size:20px;display:flex;align-items:center;
+    justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:5}
+  #settingsBtn{top:calc(12px + var(--safe-top))}
+  #recenterBtn{top:calc(64px + var(--safe-top));display:none;font-size:13px;width:auto;padding:0 14px}
+  #condChips{position:absolute;left:12px;top:calc(12px + var(--safe-top));display:flex;gap:6px;z-index:5}
+  .chip{background:rgba(17,20,24,.82);color:var(--text);font-size:12px;padding:5px 9px;border-radius:14px;
+    box-shadow:0 2px 8px rgba(0,0,0,.35)}
+
+  /* Bottom 1/4: sign reader */
+  #signPane{position:relative;flex:1 1 25%;display:flex;gap:10px;align-items:stretch;
+    padding:10px 12px calc(10px + var(--safe-bot));background:var(--panel);border-top:1px solid var(--line);
+    transition:background .25s}
+  body.over #signPane{background:#5a0f0f;animation:pulse 1s infinite alternate}
+  @keyframes pulse{from{background:#5a0f0f}to{background:#8a1414}}
+  #camWrap{position:relative;flex:0 0 31%;border-radius:10px;overflow:hidden;background:#000}
+  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  #overlay{position:absolute;inset:0;width:100%;height:100%}
+  #camState{position:absolute;left:6px;bottom:5px;font-size:10px;color:#fff;
+    background:rgba(0,0,0,.55);padding:2px 6px;border-radius:6px}
+  #limitBox{flex:1.15 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}
+  #signWrap{position:relative;height:min(100%,calc(100% - 34px));max-height:112px;aspect-ratio:1}
+  #sign{width:100%;height:100%;border-radius:50%;
+    background:#fff;border:clamp(7px,2.2vh,11px) solid var(--red);display:flex;align-items:center;
+    justify-content:center;color:#111;font-weight:800;font-size:clamp(24px,6vh,44px);
+    letter-spacing:-1px;font-variant-numeric:tabular-nums}
+  #sign.none{border-color:#59626e;color:#59626e}
+  #sign.led{background:#0b0b0b;color:#fff;box-shadow:0 0 0 3px #0b0b0b}
+  #sign.nolimit{border:3px solid #222;color:transparent;
+    background:repeating-linear-gradient(-45deg,#fff 0 9px,#3a3a3a 9px 12px)}
+  #sign.walk{font-size:clamp(22px,5vh,40px)}
+  #badge{position:absolute;right:-6px;top:-6px;min-width:26px;height:26px;border-radius:13px;padding:0 5px;
+    background:#2f7cf6;color:#fff;font-size:14px;display:none;align-items:center;justify-content:center;
+    border:2px solid var(--panel)}
+  #limitSrc,#condNote{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;max-width:100%;line-height:1.35}
+  #limitSrc{margin-top:4px}
+  #condNote{color:#c9d3df}
+  #speedBox{flex:0.9 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}
+  #speedVal{font-size:clamp(34px,8.5vh,64px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+  body.over #speedVal{color:#ffd0d0}
+  #speedUnit{font-size:12px;color:var(--muted);margin-top:4px}
+
+  /* Start + settings sheets */
+  .sheet{position:fixed;inset:0;z-index:20;background:rgba(10,12,15,.97);display:flex;
+    flex-direction:column;padding:calc(24px + var(--safe-top)) 22px calc(24px + var(--safe-bot));
+    overflow-y:auto}
+  #startSheet{justify-content:center}
+  .sheet[hidden]{display:none}
+  .sheet h1{font-size:30px;margin-bottom:6px}
+  .sheet h2{font-size:22px;margin-bottom:14px}
+  .sheet p,.sheet li{color:var(--muted);font-size:15px;line-height:1.45}
+  .sheet ul{margin:14px 0 22px 18px}
+  .btn{display:block;width:100%;border:0;border-radius:12px;padding:15px;font-size:17px;font-weight:700;
+    background:#2f7cf6;color:#fff;margin-top:10px;flex-shrink:0}
+  .btn.secondary{background:#2a313b}
+  label.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;
+    border-bottom:1px solid var(--line);font-size:15px}
+  label.row span small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+  input[type=text],select,input[type=number]{background:#1f252d;color:var(--text);border:1px solid #39424e;
+    border-radius:8px;padding:9px 10px;font-size:15px}
+  input[type=text]{width:100%;margin-top:8px}
+  input[type=number]{width:70px}
+  .keyrow{flex-direction:column;align-items:stretch}
+  #err{color:#ff9b9b;margin-top:12px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="mapPane">
+    <div id="gmap"></div>
+    <iframe id="gframe" title="Google Maps" referrerpolicy="no-referrer-when-downgrade" allow="geolocation"></iframe>
+    <div id="mapMsg">Waiting for your location…</div>
+    <div id="condChips"></div>
+    <button class="fab" id="settingsBtn" aria-label="Settings">⚙︎</button>
+    <button class="fab" id="recenterBtn">Re-centre</button>
+  </div>
+  <div id="signPane">
+    <div id="camWrap">
+      <video id="cam" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div id="camState">camera off</div>
+    </div>
+    <div id="limitBox">
+      <div id="signWrap">
+        <div id="sign" class="none"><span id="limitVal">–</span></div>
+        <div id="badge"></div>
+      </div>
+      <div id="limitSrc">no limit yet</div>
+      <div id="condNote"></div>
+    </div>
+    <div id="speedBox">
+      <div id="speedVal">–</div>
+      <div id="speedUnit">km/h</div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="startSheet">
+  <h1>SignView</h1>
+  <p>Google Maps on top, and your phone camera reading speed-limit signs below, including the extra plates under them
+    (times, rain, night) and electronic motorway signs.</p>
+  <ul>
+    <li>Mount the phone upright on the windscreen with the back camera facing the road.</li>
+    <li>Tap Start, then allow Camera and Location.</li>
+    <li>Keep the screen on and the phone charging. Don't touch it while driving.</li>
+  </ul>
+  <button class="btn" id="startBtn">Start</button>
+  <button class="btn secondary" id="startSettingsBtn">Settings</button>
+  <div id="err"></div>
+</div>
+
+<div class="sheet" id="settingsSheet" hidden>
+  <h2>Settings</h2>
+  <label class="row"><span>Units<small>Use mph in the UK, km/h elsewhere in Europe</small></span>
+    <select id="setUnit"><option value="kmh">km/h</option><option value="mph">mph</option></select></label>
+  <label class="row"><span>Warn when over the limit by<small>In the units above</small></span>
+    <input type="number" id="setTol" min="0" max="20" step="1"></label>
+  <label class="row"><span>Warning beep</span><input type="checkbox" id="setSound"></label>
+  <label class="row"><span>Country rules<small>Germany: yellow town signs mean 50, leaving a town means 100</small></span>
+    <select id="setCountry"><option value="de">Germany</option><option value="other">Other (signs only)</option></select></label>
+  <label class="row"><span>Wet road<small>For limits that apply only in rain. Auto uses live weather at your location.</small></span>
+    <select id="setWet"><option value="auto">Auto</option><option value="on">Always wet</option><option value="off">Always dry</option></select></label>
+  <label class="row"><span>Use map data for limits<small>OpenStreetMap limits when no sign has been read</small></span>
+    <input type="checkbox" id="setOsm"></label>
+  <label class="row"><span>Show detection boxes<small>Green: sign read. Blue: plate under it. Yellow: candidate.</small></span>
+    <input type="checkbox" id="setDebug"></label>
+  <label class="row keyrow"><span>Google Maps API key (optional)<small>Without a key you get the standard embedded Google Map, which
+    re-centres every few hundred metres. With a key the map follows you smoothly.</small></span>
+    <input type="text" id="setKey" placeholder="AIza…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+  <button class="btn" id="saveSettings">Save</button>
+  <button class="btn secondary" id="closeSettings">Cancel</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+(() => {
+'use strict';
+
+/* ================= settings ================= */
+const DEFAULTS = {unit:'kmh', tol:3, sound:true, osm:true, debug:false, key:'', wet:'auto', vehicle:'car', country:'de'};
+function loadSettings(){
+  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('signview') || '{}')); }
+  catch(e){ return Object.assign({}, DEFAULTS); }
+}
+function saveSettings(s){ try { localStorage.setItem('signview', JSON.stringify(s)); } catch(e){} }
+let S = loadSettings();
+S.vehicle = 'car';   // this app is set up for a car without a trailer
+
+const $ = id => document.getElementById(id);
+const VALID = {
+  kmh:[5,10,15,20,25,30,40,50,60,70,80,90,100,110,120,130],
+  mph:[10,15,20,30,40,50,60,70]
+};
+
+/* ================= state =================
+   A sign post can carry a plain limit and/or limits that only apply under a condition
+   (shown on a plate below the sign). We keep:
+     rule.base  – the plain limit {value, time, led}
+     rule.conds – conditional limits [{value, cond, time, led}]
+   cond = {type:'time', from, to, days?} | {type:'days', days} | {type:'wet'} | {type:'night'} | {type:'unknown'}  */
+const st = {
+  pos:null, speedMs:null, heading:null, lastFix:null,
+  rule:{base:null, prevBase:null, conds:[]},
+  mapLimit:null, mapLimitChangedAt:0,
+  reads:[], seen:{}, area:{kind:null, time:0}, lastEnd:0,
+  wx:null,              // {wet:boolean, time}
+  running:false
+};
+window.__signviewState = st;
+
+/* ================= audio ================= */
+let actx = null, lastBeep = 0;
+function unlockAudio(){
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === 'suspended') actx.resume(); } catch(e){}
+}
+function beep(){
+  if (!S.sound || !actx) return;
+  const now = performance.now(); if (now - lastBeep < 4000) return; lastBeep = now;
+  try {
+    [0, 0.18].forEach(off => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(actx.destination);
+      const t = actx.currentTime + off;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      o.start(t); o.stop(t + 0.16);
+    });
+  } catch(e){}
+}
+
+/* ================= wake lock ================= */
+async function keepAwake(){
+  try { if ('wakeLock' in navigator && document.visibilityState === 'visible') await navigator.wakeLock.request('screen'); }
+  catch(e){}
+}
+
+/* ================= conditions: time, weekday, rain, night ================= */
+function sunElevation(date, lat, lng){
+  const rad = Math.PI / 180, d = date.getTime() / 86400000 - 10957.5;
+  const g = (357.529 + 0.98560028 * d) * rad, q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const e = (23.439 - 0.00000036 * d) * rad;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = ((18.697374558 + 24.06570982441908 * d) % 24 + 24) % 24;
+  const ha = (gmst * 15 + lng) * rad - ra;
+  return Math.asin(Math.sin(lat * rad) * Math.sin(dec) + Math.cos(lat * rad) * Math.cos(dec) * Math.cos(ha)) / rad;
+}
+function isNight(){
+  const now = new Date();
+  if (st.pos) return sunElevation(now, st.pos.lat, st.pos.lng) < -0.833;
+  const h = now.getHours(); return h >= 21 || h < 6;
+}
+function isWet(){
+  if (S.wet === 'on') return true;
+  if (S.wet === 'off') return false;
+  return !!(st.wx && st.wx.wet && Date.now() - st.wx.time < 45 * 60000);
+}
+function inTime(from, to){
+  const n = new Date(), m = n.getHours() * 60 + n.getMinutes();
+  return from <= to ? (m >= from && m < to) : (m >= from || m < to);
+}
+function vehicleMatches(who){
+  if (who === 'heavy') return S.vehicle === 'heavy';
+  if (who === 'trailer') return S.vehicle === 'trailer';
+  if (who === 'car') return S.vehicle === 'car' || S.vehicle === 'trailer';
+  return false;
+}
+function condActive(c){
+  if (!c) return true;
+  const day = new Date().getDay();
+  switch (c.type){
+    case 'time':  return inTime(c.from, c.to) && (!c.days || c.days.includes(day));
+    case 'days':  return c.days.includes(day);
+    case 'wet':   return isWet();
+    case 'night': return isNight();
+    case 'vehicle': return vehicleMatches(c.who) && (!c.extra || condActive(c.extra));
+    default:      return false;     // unread plate: don't guess
+  }
+}
+const DAYN = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+function hm(m){ const h = Math.floor(m / 60), mm = m % 60; return mm ? h + ':' + String(mm).padStart(2, '0') : String(h); }
+function condText(c){
+  switch (c.type){
+    case 'time': return (c.days ? DAYN[c.days[0]] + '–' + DAYN[c.days[c.days.length - 1]] + ' ' : '') + hm(c.from) + '–' + hm(c.to) + 'h';
+    case 'days': return DAYN[c.days[0]] + '–' + DAYN[c.days[c.days.length - 1]];
+    case 'wet': return 'when wet';
+    case 'night': return 'at night';
+    case 'vehicle': return (c.label ? 'over ' + c.label : {heavy:'lorries/buses', car:'cars', trailer:'with trailer'}[c.who]) +
+                           (c.extra ? ', ' + condText(c.extra) : '');
+    default: return 'with a plate I can\u2019t read (ignored)';
+  }
+}
+const CONDICON = {time:'⏱', days:'📅', wet:'🌧', night:'🌙', unknown:'?'};
+function condIcon(c){ return c.type === 'vehicle' ? ({heavy:'🚚', car:'🚗', trailer:'🚗+'}[c.who]) : CONDICON[c.type]; }
+
+/* weather (Open-Meteo, free, no key) */
+let wxBusy = false, wxLastPos = null, wxLastT = 0;
+async function maybeWeather(){
+  if (S.wet !== 'auto' || wxBusy || !st.pos) return;
+  const now = Date.now();
+  if (wxLastPos && now - wxLastT < 10 * 60000 && haversine(wxLastPos, st.pos) < 10000) return;
+  wxBusy = true; wxLastPos = st.pos; wxLastT = now;
+  try {
+    const u = 'https://api.open-meteo.com/v1/forecast?latitude=' + st.pos.lat.toFixed(3) + '&longitude=' + st.pos.lng.toFixed(3) +
+              '&current=precipitation,rain,showers,snowfall,weather_code&past_minutely_15=4&minutely_15=precipitation';
+    const j = await (await fetch(u)).json();
+    const c = j.current || {}, code = c.weather_code;
+    const recent = ((j.minutely_15 && j.minutely_15.precipitation) || []).slice(0, 5).some(p => p > 0.05);
+    const wetCode = (code >= 51 && code <= 67) || (code >= 71 && code <= 86) || code >= 95;
+    st.wx = {wet: (c.precipitation > 0.05) || (c.rain > 0) || (c.showers > 0) || wetCode || recent, time: Date.now()};
+    render();
+  } catch(e){ wxLastT = now - 8 * 60000; }   // retry in ~2 min
+  wxBusy = false;
+}
+
+/* ================= limit logic ================= */
+// German general limits (StVO §3): 50 in towns; outside towns 100 for cars up to 3.5 t,
+// 80 for cars with a trailer and lorries 3.5-7.5 t (60 over 7.5 t).
+const RURAL = {car:100, trailer:80, heavy:80};
+function inUnit(kmh){ return S.unit === 'mph' ? Math.round(kmh / 1.609344 / 5) * 5 : kmh; }
+// Autobahn: no general limit for cars (130 recommended); 80 for cars with trailers and lorries.
+// Kraftfahrstraße: the outside-town limits apply (100 for cars unless the carriageways are separated).
+// Verkehrsberuhigter Bereich: walking pace (taken as 7 km/h).
+const WALK = 7;
+function defaultLimit(){
+  if (S.country !== 'de') return null;
+  switch (st.area.kind){
+    case 'town': return inUnit(50);
+    case 'calm': return inUnit(WALK);
+    case 'rural': case 'kfs': return inUnit(RURAL[S.vehicle]);
+    case 'autobahn': return S.vehicle === 'car' ? Infinity : inUnit(80);
+    default: return null;
+  }
+}
+const inTown = () => st.area.kind === 'town' || st.area.kind === 'calm';
+function cameraInfo(){
+  const r = st.rule;
+  const times = [r.base ? r.base.time : 0, r.endTime || 0].concat(r.conds.map(c => c.time));
+  const latest = Math.max.apply(null, times);
+  if (!latest) return null;
+  const active = r.conds.filter(c => condActive(c.cond));
+  if (active.length){
+    const best = active.reduce((a, b) => b.value < a.value ? b : a);
+    return {value:best.value, src:'sign', time:latest, cond:best.cond, led:best.led};
+  }
+  if (r.base){
+    const src = r.base.src || 'sign';
+    const v = src === 'sign' ? r.base.value : (defaultLimit() != null ? defaultLimit() : r.base.value);
+    return {value:v, src, why:r.base.why, time:latest, cond:null, led:r.base.led};
+  }
+  return {value:null, src:'sign', time:latest};   // only inactive conditional limits seen
+}
+function currentLimit(){
+  const cam = cameraInfo(), m = S.osm ? st.mapLimit : null;
+  if (cam && (!m || cam.time >= st.mapLimitChangedAt)){
+    if (cam.value != null) return cam;
+    if (m) return {value:m.value, src:'map', time:m.time, cond:null};   // conditional limit not in force: fall back
+    return null;
+  }
+  if (m) return {value:m.value, src:'map', time:m.time, cond:null};
+  return null;
+}
+function ago(t){
+  const s = Math.round((Date.now() - t) / 1000);
+  return s < 60 ? s + 's ago' : Math.round(s / 60) + ' min ago';
+}
+function render(){
+  const lim = currentLimit();
+  const sign = $('sign'), badge = $('badge');
+  if (lim){
+    const noLimit = lim.value === Infinity, walk = !noLimit && lim.src !== 'sign' && st.area.kind === 'calm';
+    sign.classList.remove('none'); sign.classList.toggle('led', !!lim.led);
+    sign.classList.toggle('nolimit', noLimit); sign.classList.toggle('walk', walk);
+    $('limitVal').textContent = noLimit ? '' : walk ? '🚶' : lim.value;
+    const areaName = {town:'town', calm:'traffic-calmed area', rural:'outside-town', kfs:'expressway', autobahn:'Autobahn'}[st.area.kind] || '';
+    const ENDS = {ab_end:'End of Autobahn · general limit outside towns', kfs_end:'End of expressway · general limit outside towns',
+                  calm_end:'End of traffic-calmed area · town limit'};
+    $('limitSrc').textContent = ENDS[lim.why] || {
+      sign: (lim.led ? 'Electronic sign ' : 'Sign read ') + ago(lim.time),
+      town: 'Town sign · general town limit',
+      rural: 'Left town · general limit outside towns',
+      calm: 'Traffic-calmed area · walking pace',
+      kfs: 'Expressway · ' + lim.value + ' unless lanes are separated',
+      autobahn: noLimit ? 'Autobahn · no limit (130 advised)' : 'Autobahn · limit for your vehicle',
+      end: 'End of limit · general ' + areaName + ' limit',
+      map: 'From map data'}[lim.src];
+  } else {
+    sign.classList.add('none'); sign.classList.remove('led'); $('limitVal').textContent = '–';
+    $('limitSrc').textContent = st.running ? 'Looking for signs…' : 'no limit yet';
+  }
+  if (lim && lim.cond){ badge.textContent = condIcon(lim.cond); badge.style.display = 'flex'; }
+  else badge.style.display = 'none';
+
+  // one line about conditional limits on the current stretch
+  let note = '';
+  if (lim && lim.cond) note = condIcon(lim.cond) + ' ' + condText(lim.cond) + ' · in force';
+  else {
+    const camT = cameraInfo();
+    if (camT && (!S.osm || !st.mapLimit || camT.time >= st.mapLimitChangedAt)){
+      const idle = st.rule.conds.filter(c => !condActive(c.cond));
+      if (idle.length) note = idle.map(c => c.value + ' ' + condText(c.cond) +
+        (c.cond.type === 'unknown' ? '' : c.cond.type === 'vehicle' && !vehicleMatches(c.cond.who) ? ' (not your vehicle)' : ' (not now)')).join(' · ');
+    }
+  }
+  $('condNote').textContent = note;
+
+  // chips on the map: what the app currently believes
+  const chips = [];
+  if (isNight()) chips.push('🌙 Night');
+  if (isWet()) chips.push('🌧 Wet' + (S.wet === 'on' ? ' (set)' : ''));
+  $('condChips').innerHTML = chips.map(c => '<span class="chip">' + c + '</span>').join('');
+
+  $('speedUnit').textContent = S.unit === 'mph' ? 'mph' : 'km/h';
+  let spd = null;
+  if (st.speedMs != null && st.lastFix && Date.now() - st.lastFix < 6000){
+    spd = st.speedMs * (S.unit === 'mph' ? 2.23694 : 3.6);
+    $('speedVal').textContent = Math.round(spd);
+  } else $('speedVal').textContent = '–';
+  const over = lim && spd != null && spd > lim.value + Number(S.tol);
+  document.body.classList.toggle('over', !!over);
+  if (over) beep();
+}
+setInterval(render, 1000);
+
+/* ================= location ================= */
+function haversine(a, b){
+  const R = 6371000, toR = x => x * Math.PI / 180;
+  const dLat = toR(b.lat - a.lat), dLng = toR(b.lng - a.lng);
+  const h = Math.sin(dLat/2)**2 + Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+let prevFix = null;
+function onFix(p){
+  const c = p.coords;
+  const pos = {lat:c.latitude, lng:c.longitude};
+  let spd = (c.speed != null && c.speed >= 0) ? c.speed : null;
+  if (spd == null && prevFix){
+    const dt = (p.timestamp - prevFix.t) / 1000;
+    if (dt > 0.5) spd = haversine(prevFix.pos, pos) / dt;
+  }
+  prevFix = {pos, t:p.timestamp};
+  st.speedMs = spd == null ? st.speedMs : (st.speedMs == null ? spd : st.speedMs * 0.4 + spd * 0.6);
+  if (c.heading != null && !isNaN(c.heading) && (spd || 0) > 1.5) st.heading = c.heading;
+  st.pos = pos; st.lastFix = Date.now();
+  updateMap(); maybeQueryOsm(); maybeWeather(); render();
+}
+function startLocation(){
+  if (!('geolocation' in navigator)){ $('mapMsg').textContent = 'Location is not available in this browser.'; return; }
+  navigator.geolocation.watchPosition(onFix, e => {
+    $('mapMsg').textContent = e.code === 1
+      ? 'Location permission was refused. Allow it in Settings › Privacy › Location Services › Safari Websites.'
+      : 'Waiting for GPS…';
+  }, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
+}
+
+/* ================= map ================= */
+let gmap = null, gMarker = null, follow = true, lastFrameCentre = null, mapMode = null;
+function initMapMode(){
+  if (S.key){
+    mapMode = 'js';
+    window.__initGMap = () => {
+      gmap = new google.maps.Map($('gmap'), {
+        center: st.pos || {lat:51.5, lng:0}, zoom: 17, disableDefaultUI: true,
+        gestureHandling: 'greedy', clickableIcons: false
+      });
+      gmap.addListener('dragstart', () => { follow = false; $('recenterBtn').style.display = 'flex'; });
+      $('mapMsg').style.display = 'none';
+      if (st.pos) updateMap();
+    };
+    const s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(S.key) + '&callback=__initGMap&v=weekly';
+    s.async = true;
+    s.onerror = () => { $('mapMsg').textContent = 'Could not load Google Maps with that key. Check it in Settings.'; };
+    document.head.appendChild(s);
+    window.gm_authFailure = () => { $('mapMsg').style.display='flex'; $('mapMsg').textContent = 'Google rejected the API key. Check it in Settings, or clear it to use the embedded map.'; };
+  } else mapMode = 'embed';
+}
+function updateMap(){
+  if (!st.pos) return;
+  if (mapMode === 'js' && gmap){
+    const icon = {
+      path: st.heading != null ? google.maps.SymbolPath.FORWARD_CLOSED_ARROW : google.maps.SymbolPath.CIRCLE,
+      scale: st.heading != null ? 6 : 8, rotation: st.heading || 0,
+      fillColor: '#2f7cf6', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2
+    };
+    if (!gMarker) gMarker = new google.maps.Marker({map: gmap, position: st.pos, icon, clickable:false});
+    else { gMarker.setPosition(st.pos); gMarker.setIcon(icon); }
+    if (follow) gmap.panTo(st.pos);
+  } else if (mapMode === 'embed'){
+    if (!lastFrameCentre || haversine(lastFrameCentre, st.pos) > 300){
+      lastFrameCentre = st.pos;
+      const f = $('gframe');
+      f.src = 'https://maps.google.com/maps?q=' + st.pos.lat.toFixed(6) + ',' + st.pos.lng.toFixed(6) + '&z=16&output=embed';
+      f.style.display = 'block'; $('mapMsg').style.display = 'none';
+    }
+  }
+}
+$('recenterBtn').onclick = () => { follow = true; $('recenterBtn').style.display = 'none'; updateMap(); };
+
+/* ================= OpenStreetMap limits ================= */
+let osmBusy = false, osmLast = null, osmLastT = 0;
+const OSM_ZONES = {'urban':50,'rural':100,'living_street':7,'walk':7};
+function parseMaxspeed(v){
+  if (!v) return null;
+  v = String(v).trim().toLowerCase();
+  let m = v.match(/^(\d+)\s*mph$/); if (m) return {v:+m[1], u:'mph'};
+  m = v.match(/^(\d+)(\s*km\/h)?$/); if (m) return {v:+m[1], u:'kmh'};
+  m = v.match(/^[a-z]{2}:([a-z_]+)$/); if (m && OSM_ZONES[m[1]]) return {v:OSM_ZONES[m[1]], u:'kmh'};
+  return null;
+}
+function toUnit(o){
+  if (o.u === S.unit) return o.v;
+  return S.unit === 'mph' ? Math.round(o.v / 1.609344 / 5) * 5 : Math.round(o.v * 1.609344 / 10) * 10;
+}
+async function maybeQueryOsm(){
+  if (!S.osm || osmBusy || !st.pos) return;
+  const now = Date.now();
+  if (osmLast && (now - osmLastT < 8000 || haversine(osmLast, st.pos) < 60)) return;
+  osmBusy = true; osmLast = st.pos; osmLastT = now;
+  const q = '[out:json][timeout:8];way(around:18,' + st.pos.lat + ',' + st.pos.lng + ')[highway][maxspeed];out tags;';
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:'data=' + encodeURIComponent(q),
+      headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    const j = await r.json(), counts = {};
+    (j.elements || []).forEach(e => {
+      const p = parseMaxspeed(e.tags && e.tags.maxspeed); if (!p) return;
+      const v = toUnit(p); counts[v] = (counts[v] || 0) + 1;
+    });
+    const best = Object.keys(counts).sort((a,b) => counts[b] - counts[a])[0];
+    if (best != null){
+      const v = +best;
+      if (!st.mapLimit || st.mapLimit.value !== v) st.mapLimitChangedAt = Date.now();
+      st.mapLimit = {value:v, time:Date.now()};
+      render();
+    }
+  } catch(e){}
+  osmBusy = false;
+}
+
+/* ================= camera ================= */
+const video = $('cam'), overlay = $('overlay'), octx = overlay.getContext('2d');
+const proc = document.createElement('canvas'), pctx = proc.getContext('2d', {willReadFrequently:true});
+const crop = document.createElement('canvas'), cctx = crop.getContext('2d', {willReadFrequently:true});
+const pcan = document.createElement('canvas'), plctx = pcan.getContext('2d', {willReadFrequently:true});
+let stream = null;
+async function startCamera(){
+  stream = await navigator.mediaDevices.getUserMedia({audio:false,
+    video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}}});
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  $('camState').textContent = 'loading reader…';
+}
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !st.running) return;
+  keepAwake();
+  const live = stream && stream.getVideoTracks().some(t => t.readyState === 'live');
+  if (!live){ try { await startCamera(); $('camState').textContent = 'reading'; } catch(e){} }
+});
+
+/* ================= sign detection =================
+   Speed signs are a red ring with numbers inside:
+   - printed signs: light centre, dark numbers
+   - electronic (LED) signs on motorways: dark centre, bright dotted numbers, red LED ring
+   We find red ring-shaped blobs, classify the centre, read the numbers, then look for a plate below. */
+const PW = 360;
+function findCandidates(){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return [];
+  const PH = Math.round(PW * vh / vw);
+  if (proc.width !== PW || proc.height !== PH){ proc.width = PW; proc.height = PH; }
+  pctx.drawImage(video, 0, 0, PW, PH);
+  const d = pctx.getImageData(0, 0, PW, PH).data;
+  const N = PW * PH, red0 = new Uint8Array(N), light = new Uint8Array(N), dark = new Uint8Array(N), bright = new Uint8Array(N);
+  const yel = new Uint8Array(N), stripe = new Uint8Array(N), blue = new Uint8Array(N);
+  for (let i = 0, p = 0; i < N; i++, p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2];
+    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    if (r > 80 && r > g * 1.55 && r > b * 1.35 && (mx - mn) > 0.33 * mx) red0[i] = 1;
+    else {
+      if (mn > 0.55 * mx && mx > 110) light[i] = 1;
+      if (mx < 75) dark[i] = 1;
+      if (mx > 150) bright[i] = 1;          // white or amber LED digits
+      if (r > 150 && g > 110 && b < 0.55 * r && g >= 0.6 * r && g <= 1.02 * r) yel[i] = 1;   // traffic yellow
+      if (mx < 100 && (mx - mn) < 0.3 * mx + 12) stripe[i] = 1;                                  // black/dark grey
+      if (b > 80 && r < 0.45 * b && g < 0.78 * b) blue[i] = 1;                                      // sign blue (not pale sky)
+    }
+  }
+  // close small gaps (LED rings are made of separate dots)
+  const mask = new Uint8Array(N);
+  for (let y = 1; y < PH - 1; y++) for (let x = 1; x < PW - 1; x++){
+    const i = y * PW + x;
+    if (red0[i] || red0[i-1] || red0[i+1] || red0[i-PW] || red0[i+PW]) mask[i] = 1;
+  }
+  const lab = new Int32Array(N), stack = new Int32Array(N), cands = [];
+  let next = 1;
+  for (let s = 0; s < N; s++){
+    if (!mask[s] || lab[s]) continue;
+    let sp = 0, cnt = 0, x0 = PW, x1 = 0, y0 = PH, y1 = 0;
+    stack[sp++] = s; lab[s] = next;
+    while (sp){
+      const i = stack[--sp], x = i % PW, y = (i / PW) | 0; cnt++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && mask[i-1] && !lab[i-1]){ lab[i-1] = next; stack[sp++] = i-1; }
+      if (x < PW-1 && mask[i+1] && !lab[i+1]){ lab[i+1] = next; stack[sp++] = i+1; }
+      if (y > 0 && mask[i-PW] && !lab[i-PW]){ lab[i-PW] = next; stack[sp++] = i-PW; }
+      if (y < PH-1 && mask[i+PW] && !lab[i+PW]){ lab[i+PW] = next; stack[sp++] = i+PW; }
+    }
+    next++;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (w < 12 || h < 12 || w > PW * 0.6 || h > PH * 0.6) continue;
+    const ar = w / h; if (ar < 0.7 || ar > 1.45) continue;
+    const fill = cnt / (w * h); if (fill < 0.12 || fill > 0.7) continue;
+    const cx0 = x0 + Math.round(w * 0.28), cx1 = x1 - Math.round(w * 0.28);
+    const cy0 = y0 + Math.round(h * 0.28), cy1 = y1 - Math.round(h * 0.28);
+    let tot = 0, red = 0, lt = 0, dk = 0, br = 0;
+    for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++){
+      const i = y * PW + x; tot++;
+      if (red0[i]) red++; else { if (light[i]) lt++; if (dark[i]) dk++; if (bright[i]) br++; }
+    }
+    if (!tot || red / tot > 0.15) continue;
+    let kind = null;
+    if (lt / tot >= 0.3) kind = 'print';
+    else if (dk / tot >= 0.4 && br / tot >= 0.04 && br / tot <= 0.55) kind = 'led';
+    if (!kind) continue;
+    const sc = vw / PW;
+    cands.push({x:x0 * sc, y:y0 * sc, w:w * sc, h:h * sc, size:w * h, kind});
+  }
+  const sc = vw / PW;
+  const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
+  return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, dark, PW, PH, sc) : [],
+          blues: S.country === 'de' ? findBlueSigns(red0, blue, light, PW, PH, sc) : [],
+          ends: findEndSigns(red0, light, stripe, PW, PH, sc)};
+}
+
+function blobs(mask, W, H, minW, minH){
+  const lab = new Int32Array(W * H), stack = new Int32Array(W * H), out = []; let next = 1;
+  for (let s = 0; s < W * H; s++){
+    if (!mask[s] || lab[s]) continue;
+    let sp = 0, cnt = 0, x0 = W, x1 = 0, y0 = H, y1 = 0;
+    stack[sp++] = s; lab[s] = next;
+    while (sp){
+      const i = stack[--sp], x = i % W, y = (i / W) | 0; cnt++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && mask[i-1] && !lab[i-1]){ lab[i-1] = next; stack[sp++] = i-1; }
+      if (x < W-1 && mask[i+1] && !lab[i+1]){ lab[i+1] = next; stack[sp++] = i+1; }
+      if (y > 0 && mask[i-W] && !lab[i-W]){ lab[i-W] = next; stack[sp++] = i-W; }
+      if (y < H-1 && mask[i+W] && !lab[i+W]){ lab[i+W] = next; stack[sp++] = i+W; }
+    }
+    next++;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (w >= minW && h >= minH) out.push({x0, x1, y0, y1, w, h, n:cnt});
+  }
+  return out;
+}
+function frac(mask, W, x0, y0, x1, y1){
+  let n = 0, t = 0;
+  for (let y = Math.round(y0); y <= Math.round(y1); y++) for (let x = Math.round(x0); x <= Math.round(x1); x++){ t++; n += mask[y * W + x]; }
+  return t ? n / t : 0;
+}
+
+/* German town signs (Ortstafel): a yellow rectangle with black lettering.
+   Sign 310 (entering): plain. Sign 311 (leaving): a red stripe from bottom-left to top-right. */
+function findTownSigns(d, red0, yel, dark, W, H, sc){
+  const both = new Uint8Array(W * H);
+  for (let i = 0; i < both.length; i++) both[i] = yel[i] | red0[i];   // the red stripe can split the yellow in two
+  const out = [];
+  for (const b of blobs(both, W, H, 20, 8)){
+    const ar = b.w / b.h; if (ar < 1.3 || ar > 3.8 || b.w > W * 0.7) continue;
+    const yf = frac(yel, W, b.x0, b.y0, b.x1, b.y1); if (yf < 0.4 || yf > 0.97) continue;
+    // all four corners yellow: a rectangle, not a yellow arrow-shaped direction sign
+    const cw = b.w * 0.12, ch = b.h * 0.2;
+    const corners = [[b.x0, b.y0], [b.x1 - cw, b.y0], [b.x0, b.y1 - ch], [b.x1 - cw, b.y1 - ch]]
+      .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));        // (the red stripe reaches two corners)
+    if (Math.min.apply(null, corners) < 0.35) continue;
+    const df = frac(dark, W, b.x0, b.y0, b.x1, b.y1); if (df < 0.03 || df > 0.45) continue;
+    // red stripe rising from left to right?
+    const mid = (b.x0 + b.x1) / 2; let nl = 0, nr = 0, yl = 0, yr = 0;
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
+      if (x < mid){ nl++; yl += y; } else { nr++; yr += y; } }
+    const area = b.w * b.h, rf = (nl + nr) / area;
+    const end = nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.2 && rf < 0.3;
+    if (!end && rf > 0.04) continue;          // lots of red but no stripe: not a town sign (e.g. a delivery van)
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, size:area});
+  }
+  return out.sort((a, b) => b.size - a.size).slice(0, 1);
+}
+
+function risingRedStripe(red0, W, b){
+  const mid = (b.x0 + b.x1) / 2; let nl = 0, nr = 0, yl = 0, yr = 0;
+  for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
+    if (x < mid){ nl++; yl += y; } else { nr++; yr += y; } }
+  const area = b.w * b.h;
+  return nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.2 && (nl + nr) / area < 0.3;
+}
+
+/* Blue German signs with a white pictogram: Autobahn (330.1), Kraftfahrstraße (331.1),
+   traffic-calmed area (325.1). The same sign with a red diagonal stripe marks the end. */
+function findBlueSigns(red0, blue, light, W, H, sc){
+  const both = new Uint8Array(W * H);
+  for (let i = 0; i < both.length; i++) both[i] = blue[i] | red0[i];
+  const out = [];
+  for (const b of blobs(both, W, H, 14, 10)){
+    if (b.x0 === 0 || b.y0 === 0 || b.x1 === W - 1) continue;           // big blue areas running off-screen (sky)
+    const ar = b.w / b.h; if (ar < 0.75 || ar > 1.9 || b.w > W * 0.5) continue;
+    const bf = frac(blue, W, b.x0, b.y0, b.x1, b.y1); if (bf < 0.35) continue;
+    const cw = b.w * 0.12, ch = b.h * 0.12;
+    const corners = [[b.x0, b.y0], [b.x1 - cw, b.y0], [b.x0, b.y1 - ch], [b.x1 - cw, b.y1 - ch]]
+      .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));
+    if (Math.min.apply(null, corners) < 0.5) continue;
+    const wf = frac(light, W, b.x0 + b.w * 0.1, b.y0 + b.h * 0.1, b.x1 - b.w * 0.1, b.y1 - b.h * 0.1);
+    if (wf < 0.08 || wf > 0.55) continue;
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h, wide: ar > 1.3, end: risingRedStripe(red0, W, b)});
+  }
+  return out.sort((a, b) => b.size - a.size).slice(0, 1);
+}
+
+// Look at the white pictogram on a blue sign at full resolution and say which sign it is.
+const bcan = document.createElement('canvas'), bctx = bcan.getContext('2d', {willReadFrequently:true});
+function classifyBlue(c){
+  const W = c.wide ? 96 : 64, H = 64;
+  bcan.width = W; bcan.height = H;
+  bctx.drawImage(video, c.x, c.y, c.w, c.h, 0, 0, W, H);
+  const d = bctx.getImageData(0, 0, W, H).data, wh = new Uint8Array(W * H);
+  for (let i = 0, p = 0; i < W * H; i++, p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mn > 0.6 * mx && mx > 140) wh[i] = 1;
+  }
+  const m = 0.08, X0 = Math.round(W * m), X1 = Math.round(W * (1 - m)) - 1, Y0 = Math.round(H * m), Y1 = Math.round(H * (1 - m)) - 1;
+  const row = y => { let n = 0; for (let x = X0; x <= X1; x++) n += wh[y * W + x]; return n / (X1 - X0 + 1); };
+  const runs = y => { let n = 0, on = false, len = 0;
+    for (let x = X0; x <= X1; x++){ if (wh[y * W + x]){ len++; if (!on && len >= 2){ n++; on = true; } } else { on = false; len = 0; } } return n; };
+  const all = components(wh, W, H).filter(k => k.n > 15 && k.x0 > 0 && k.x1 < W - 1 && k.y0 > 0 && k.y1 < H - 1);
+  if (!all.length) return null;
+  if (c.wide){
+    // traffic-calmed area: several separate figures (house, people, car) spread across a wide sign
+    const big = all.filter(k => k.n > 40);
+    const spread = big.length ? (Math.max(...big.map(k => k.x1)) - Math.min(...big.map(k => k.x0))) / (X1 - X0) : 0;
+    return big.length >= 3 && spread > 0.6 ? 'calm' : null;
+  }
+  // Autobahn: a bridge across the upper half, and two roads below with the blue central strip between them
+  let bridge = false;
+  for (let y = Math.round(H * 0.2); y <= Math.round(H * 0.48); y++) if (row(y) > 0.6){ bridge = true; break; }
+  let twoRoads = 0, rows = 0; const cx0 = Math.round(W * 0.47), cx1 = Math.round(W * 0.53);
+  for (let y = Math.round(H * 0.6); y <= Math.round(H * 0.88); y++){
+    let centre = 0; for (let x = cx0; x <= cx1; x++) centre += wh[y * W + x];
+    rows++; if (runs(y) >= 2 && centre <= 1) twoRoads++;
+  }
+  // the roads also continue above the bridge towards the horizon (a car pictogram has nothing up there)
+  let above = 0;
+  for (let y = Math.round(H * 0.18); y <= Math.round(H * 0.3); y++) for (let x = Math.round(W * 0.35); x <= Math.round(W * 0.65); x++) above += wh[y * W + x];
+  if (bridge && twoRoads >= rows * 0.5 && above > 0) return 'autobahn';
+  // Kraftfahrstraße: one car silhouette across the middle, nothing at the top
+  const big = all.sort((a, b) => b.n - a.n)[0];
+  let top = 0; for (let y = Y0; y < Math.round(H * 0.28); y++) top += row(y);
+  if (big.w > (X1 - X0) * 0.6 && big.h < H * 0.6 && big.y0 > H * 0.25 && big.cy > H * 0.4 && big.cy < H * 0.7 && top < 0.3) return 'kfs';
+  return null;
+}
+
+/* End-of-limit signs (278 end of a limit, 282 end of all restrictions, also the end of a 30 zone):
+   a white disc with a black border and diagonal stripes running from bottom-left to top-right. */
+function findEndSigns(red0, light, stripe, W, H, sc){
+  const out = [];
+  for (const b of blobs(stripe, W, H, 12, 12)){
+    const ar = b.w / b.h; if (ar < 0.75 || ar > 1.35 || b.w > W * 0.5) continue;
+    const fill = b.n / (b.w * b.h); if (fill < 0.12 || fill > 0.65) continue;
+    if (frac(red0, W, b.x0, b.y0, b.x1, b.y1) > 0.03) continue;
+    if (frac(light, W, b.x0 + b.w * 0.15, b.y0 + b.h * 0.15, b.x1 - b.w * 0.15, b.y1 - b.h * 0.15) < 0.3) continue;
+    // crossing the stripes (top-left to bottom-right) flips dark/light many times; along them it doesn't
+    const across = [], along = [];
+    for (let k = 0; k < 40; k++){
+      const t = 0.12 + 0.76 * k / 39, x = Math.round(b.x0 + t * (b.w - 1));
+      across.push(stripe[Math.round(b.y0 + t * (b.h - 1)) * W + x]);
+      along.push(stripe[Math.round(b.y1 - t * (b.h - 1)) * W + x]);
+    }
+    const flips = a => a.reduce((n, v, i) => n + (i && v !== a[i - 1] ? 1 : 0), 0);
+    if (flips(across) < 6 || flips(along) > 3) continue;
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h});
+  }
+  return out.sort((a, b) => b.size - a.size).slice(0, 1);
+}
+
+function otsu(lum){
+  const hist = new Array(256).fill(0); for (let i = 0; i < lum.length; i++) hist[lum[i]]++;
+  let sum = 0, sumB = 0, wB = 0, best = 0, thr = 128; const total = lum.length;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  for (let t = 0; t < 256; t++){
+    wB += hist[t]; if (!wB) continue; const wF = total - wB; if (!wF) break;
+    sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF); if (between > best){ best = between; thr = t; }
+  }
+  return thr;
+}
+function boxBlur(lum, W, H){
+  const out = new Uint8Array(lum.length);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){
+    let s = 0, n = 0;
+    for (let dy = -1; dy <= 1; dy++){ const yy = y + dy; if (yy < 0 || yy >= H) continue;
+      for (let dx = -1; dx <= 1; dx++){ const xx = x + dx; if (xx < 0 || xx >= W) continue; s += lum[yy * W + xx]; n++; } }
+    out[y * W + x] = s / n;
+  }
+  return out;
+}
+
+function prepareCrop(c){
+  const ix = c.x + c.w * 0.16, iy = c.y + c.h * 0.22, iw = c.w * 0.68, ih = c.h * 0.56;
+  const H = 72, W = Math.max(40, Math.round(H * iw / ih)), pad = 16;
+  crop.width = W + pad * 2; crop.height = H + pad * 2;
+  cctx.fillStyle = c.kind === 'led' ? '#000' : '#fff'; cctx.fillRect(0, 0, crop.width, crop.height);
+  cctx.drawImage(video, ix, iy, iw, ih, pad, pad, W, H);
+  const img = cctx.getImageData(0, 0, crop.width, crop.height), d = img.data;
+  let lum = new Uint8Array(d.length / 4);
+  for (let i = 0, p = 0; p < d.length; i++, p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2];
+    const isRed = r > 90 && r > g * 1.5 && r > b * 1.3;
+    let l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    if (c.kind === 'led'){ l = isRed ? 255 : 255 - Math.max(r, g, b); }   // bright digits -> dark on light
+    else if (isRed) l = 255;
+    lum[i] = l;
+  }
+  if (c.kind === 'led'){ lum = boxBlur(lum, crop.width, crop.height); lum = boxBlur(lum, crop.width, crop.height); }
+  const thr = otsu(lum);
+  for (let i = 0, p = 0; p < d.length; i++, p += 4){ const v = lum[i] <= thr ? 0 : 255; d[p] = d[p+1] = d[p+2] = v; d[p+3] = 255; }
+  cctx.putImageData(img, 0, 0);
+  return crop;
+}
+
+/* ---------- plates under the sign ---------- */
+// Returns the plate rectangle in video pixels, or null.
+function findPlate(c){ const why = m => { if (S.debug) window.__fpWhy = m; return null; };
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const rx = Math.max(0, c.x - c.w * 0.45), ry = c.y + c.h * 1.0;
+  const rw = Math.min(vw - rx, c.w * 1.9), rh = Math.min(vh - ry, c.h * 0.95);
+  if (rw < 20 || rh < 10) return why('region');
+  const SW = 120, SH = Math.max(10, Math.round(SW * rh / rw));
+  pcan.width = SW; pcan.height = SH;
+  plctx.drawImage(video, rx, ry, rw, rh, 0, 0, SW, SH);
+  const d = plctx.getImageData(0, 0, SW, SH).data;
+  const white = new Uint8Array(SW * SH), redm = new Uint8Array(SW * SH);
+  for (let i = 0, p = 0; p < d.length; i++, p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mn > 0.75 * mx && mx > 140) white[i] = 1;
+    if (r > 80 && r > g * 1.55 && r > b * 1.35) redm[i] = 1;
+  }
+  // rows in the central band that are mostly white
+  const bx0 = Math.round(SW * 0.30), bx1 = Math.round(SW * 0.70);
+  const rowW = [];
+  for (let y = 0; y < SH; y++){ let n = 0, rd = 0; for (let x = bx0; x < bx1; x++){ n += white[y*SW+x]; rd += redm[y*SW+x]; }
+    rowW.push(rd > (bx1 - bx0) * 0.15 ? -1 : n / (bx1 - bx0)); }
+  let top = -1; for (let y = 0; y < Math.round(SH * 0.35); y++) if (rowW[y] > 0.45){ top = y; break; }
+  if (top < 0) return why('notop ' + rowW.slice(0,12).map(v=>v.toFixed(2)).join(','));
+  let bot = top; while (bot + 1 < SH && rowW[bot + 1] > 0.3) bot++;
+  const ph = bot - top + 1;
+  const signH = c.h * SH / rh;
+  if (ph < signH * 0.18 || ph > signH * 0.9) return why('ph ' + ph + ' signH ' + signH.toFixed(1) + ' rows ' + rowW.map(v=>v.toFixed(2)).join(','));
+  // horizontal extent
+  const colW = x => { let n = 0; for (let y = top; y <= bot; y++) n += white[y*SW+x]; return n / ph; };
+  // white columns, allowing gaps where a symbol or text fills the middle
+  const signW = c.w * SW / rw, maxGap = Math.round(signW * 0.6), mid = SW / 2;
+  const cw = []; for (let x = 0; x < SW; x++) cw.push(colW(x) > 0.35);
+  let best = null, runStart = -1, lastOn = -1;
+  for (let x = 0; x <= SW; x++){
+    const on = x < SW && cw[x];
+    if (on){ if (runStart < 0) runStart = x; else if (x - lastOn > maxGap){
+        const run = [runStart, lastOn]; if (!best || Math.abs((run[0]+run[1])/2 - mid) < Math.abs((best[0]+best[1])/2 - mid)) best = run; runStart = x; }
+      lastOn = x; }
+    if (x === SW && runStart >= 0){ const run = [runStart, lastOn];
+      if (!best || Math.abs((run[0]+run[1])/2 - mid) < Math.abs((best[0]+best[1])/2 - mid)) best = run; }
+  }
+  if (!best) return why('nocols');
+  const l = best[0], r = best[1];
+  const pw = r - l + 1;
+  if (pw < signW * 0.6 || pw > signW * 1.8) return why('pw ' + pw + ' signW ' + signW.toFixed(1));
+  // must contain some dark marks (text or symbol), but not be mostly dark,
+  // and must not be another speed sign mounted below this one (red ring)
+  let dk = 0, rd = 0;
+  for (let y = top; y <= Math.min(SH - 1, bot + 2); y++) for (let x = Math.max(0, l - 3); x <= Math.min(SW - 1, r + 3); x++){
+    const p = (y*SW+x)*4; if (Math.max(d[p],d[p+1],d[p+2]) < 90) dk++; rd += redm[y*SW+x]; }
+  if (rd > pw * ph * 0.02) return why('red ' + rd);
+  const dr = dk / (pw * ph); if (dr < 0.02 || dr > 0.45) return why('dark ' + dr.toFixed(2));
+  if (S.debug) window.__fpWhy = 'ok';
+  const sx = rw / SW, sy = rh / SH;
+  return {x: rx + l * sx, y: ry + top * sy, w: pw * sx, h: ph * sy};
+}
+
+// Binarise the plate (black marks on white) into pcan; return the bitmap for shape checks.
+function preparePlate(p){
+  const inset = 0.07, ix = p.x + p.w * inset, iy = p.y + p.h * inset, iw = p.w * (1 - 2 * inset), ih = p.h * (1 - 2 * inset);
+  const H = 70, W = Math.max(40, Math.round(H * iw / ih)), pad = 12;
+  pcan.width = W + pad * 2; pcan.height = H + pad * 2;
+  plctx.fillStyle = '#fff'; plctx.fillRect(0, 0, pcan.width, pcan.height);
+  plctx.drawImage(video, ix, iy, iw, ih, pad, pad, W, H);
+  const img = plctx.getImageData(0, 0, pcan.width, pcan.height), d = img.data;
+  const lum = new Uint8Array(d.length / 4);
+  for (let i = 0, q = 0; q < d.length; i++, q += 4) lum[i] = Math.round(0.299 * d[q] + 0.587 * d[q+1] + 0.114 * d[q+2]);
+  const thr = Math.min(otsu(lum), 150);
+  const bin = new Uint8Array(lum.length);
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const on = lum[i] <= thr; bin[i] = on ? 1 : 0;
+    const v = on ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
+  plctx.putImageData(img, 0, 0);
+  return {bin, W: pcan.width, H: pcan.height, pad};
+}
+
+function components(bin, W, H){
+  const lab = new Int32Array(W * H), stack = new Int32Array(W * H), out = []; let next = 1;
+  for (let s = 0; s < W * H; s++){
+    if (!bin[s] || lab[s]) continue;
+    let sp = 0, cnt = 0, x0 = W, x1 = 0, y0 = H, y1 = 0, sy = 0;
+    stack[sp++] = s; lab[s] = next;
+    while (sp){
+      const i = stack[--sp], x = i % W, y = (i / W) | 0; cnt++; sy += y;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const j of [i-1, i+1, i-W, i+W]) if (j >= 0 && j < W*H && bin[j] && !lab[j] && Math.abs((j % W) - x) <= 1){ lab[j] = next; stack[sp++] = j; }
+    }
+    next++;
+    if (cnt >= 6) out.push({id:next - 1, x0, x1, y0, y1, w:x1-x0+1, h:y1-y0+1, n:cnt, cy:sy/cnt});
+  }
+  out.lab = lab;
+  return out;
+}
+
+// Shape check for pictogram plates (no readable text).
+function plateSymbol(pb){
+  const all = components(pb.bin, pb.W, pb.H);
+  const comps = all.filter(c => c.n > 12); comps.lab = all.lab;
+  if (!comps.length) return null;
+  const innerW = pb.W - 2 * pb.pad, innerH = pb.H - 2 * pb.pad;
+  comps.sort((a, b) => b.n - a.n);
+  const big = comps[0];
+  // rain: a wide cloud in the upper part with several small drops/streaks beneath it
+  // (one streak may touch the cloud, so don't rely on the cloud's height)
+  const drops = comps.slice(1).filter(c => c.cy > big.cy && c.n < big.n * 0.35 && c.y0 >= big.y0 + big.h * 0.4 &&
+                                           c.h > c.w * 1.2 && c.x0 >= big.x0 - big.w * 0.2 && c.x1 <= big.x1 + big.w * 0.2);
+  if (big.w > innerW * 0.3 && big.cy < pb.pad + innerH * 0.6 && drops.length >= 2) return {type:'wet'};
+  // night: a single crescent moon
+  const fill = big.n / (big.w * big.h), ar = big.w / big.h;
+  const others = comps.slice(1).filter(c => c.n > big.n * 0.15);
+  if (!others.length && big.h > innerH * 0.45 && ar > 0.45 && ar < 1.1 && fill > 0.2 && fill < 0.55) return {type:'night'};
+  // vehicle pictograms: a wide silhouette (body plus wheels)
+  const parts = comps.filter(c => c.n > big.n * 0.08);
+  const ux0 = Math.min(...parts.map(c => c.x0)), ux1 = Math.max(...parts.map(c => c.x1));
+  const uy0 = Math.min(...parts.map(c => c.y0)), uy1 = Math.max(...parts.map(c => c.y1));
+  const uw = ux1 - ux0 + 1, uh = uy1 - uy0 + 1;
+  // (text has many similar-sized letters; a pictogram is a few large shapes)
+  const total = parts.reduce((a, c) => a + c.n, 0);
+  if (parts.length <= 6 && big.n >= total * 0.35 && uw > innerW * 0.25 && uw / uh > 1.25 && uh > innerH * 0.3){
+    // car with trailer: two large bodies side by side, or a very long silhouette
+    const bodies = comps.filter(c => c.n > big.n * 0.3 && c.h > uh * 0.35).sort((a, b) => a.x0 - b.x0);
+    // (a lorry's cab and box are also separate shapes, but with only a narrow gap between them)
+    const sideBySide = bodies.length >= 2 && bodies[1].x0 - bodies[0].x1 > uw * 0.09;
+    if (sideBySide || uw / uh > 2.8) return {type:'vehicle', who:'trailer'};
+    // Lorries and buses are boxy: across most of their length the roof is at full height.
+    // A car is low, with only a short cabin reaching the top.
+    const lab = comps.lab; let tall = 0;
+    for (let x = big.x0; x <= big.x1; x++){
+      for (let y = big.y0; y <= big.y1; y++) if (lab[y * pb.W + x] === big.id){ if (y <= big.y0 + big.h * 0.22) tall++; break; }
+    }
+    const topFrac = tall / big.w, aspect = uw / uh;
+    return {type:'vehicle', who: (topFrac >= 0.56 || aspect < 1.75) ? 'heavy' : 'car'};
+  }
+  return null;
+}
+
+const DAYMAP = {mo:1, di:2, tu:2, mi:3, we:3, do:4, th:4, fr:5, sa:6, so:0, su:0, lu:1, ma:2, me:3, je:4, ve:5};
+function dayRange(a, b){
+  const s = DAYMAP[a], e = DAYMAP[b]; if (s == null || e == null) return null;
+  const out = []; let k = s; for (let i = 0; i < 7; i++){ out.push(k); if (k === e) break; k = (k + 1) % 7; } return out;
+}
+function parseVehicle(t){
+  const w = t.match(/(\d{1,2}(?:[.,]\d)?)\s*t\b/);
+  if (w && parseFloat(w[1].replace(',', '.')) >= 2.8) return {type:'vehicle', who:'heavy', label: w[1].replace('.', ',') + ' t'};
+  if (/lkw|hgv|truck|camion|lorr|\bpl\b/.test(t)) return {type:'vehicle', who:'heavy'};
+  if (/\bbus|autobus/.test(t)) return {type:'vehicle', who:'heavy'};
+  if (/anh[aä]ng|trailer|remorq|caravan|wohnw/.test(t)) return {type:'vehicle', who:'trailer'};
+  if (/pkw|\bcars?\b|voiture/.test(t)) return {type:'vehicle', who:'car'};
+  return null;
+}
+function mergeConds(list){
+  list = list.filter(Boolean);
+  // if one of the plates couldn't be read, the combination is uncertain: don't apply it
+  if (list.length > 1 && list.some(c => c.type === 'unknown')) return {type:'unknown'};
+  const veh = list.find(c => c.type === 'vehicle');
+  const other = list.find(c => c.type !== 'vehicle' && c.type !== 'unknown');
+  if (veh) return other ? Object.assign({}, veh, {extra: other}) : veh;
+  return other || list[0] || null;
+}
+function parsePlateText(raw){
+  const t = raw.toLowerCase().replace(/[–—_]/g, '-').replace(/[|]/g, '1').replace(/\s+/g, ' ').trim();
+  return mergeConds([parseVehicle(t), parseOther(t)]);
+}
+function parseOther(t){
+  if (/n[aä]ss|wet|rain|regen|pluie|nat\b|nedb/.test(t)) return {type:'wet'};
+  if (/nacht|night|nuit|notte/.test(t)) return {type:'night'};
+  let days = null;
+  const dm = t.match(/\b(mo|di|tu|mi|we|do|th|fr|sa|so|su|lu|ma|me|je|ve)\.?\s*-\s*(mo|di|tu|mi|we|do|th|fr|sa|so|su|lu|ma|me|je|ve)\b/);
+  if (dm) days = dayRange(dm[1], dm[2]);
+  const tm = t.match(/(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?\s*(h|uhr)?/);
+  if (tm){
+    const h1 = +tm[1], m1 = +(tm[2] || 0), h2 = +tm[3], m2 = +(tm[4] || 0);
+    if (h1 <= 24 && h2 <= 24 && m1 < 60 && m2 < 60 && !(h1 === h2 && m1 === m2))
+      return {type:'time', from:(h1 % 24) * 60 + m1, to:(h2 % 24) * 60 + m2, days: days || undefined};
+  }
+  if (days) return {type:'days', days};
+  return null;
+}
+
+let worker = null, plateWorker = null, busy = false;
+async function initReader(){
+  const opts = window.SIGNVIEW_TESS_OPTS || {};
+  worker = await Tesseract.createWorker('eng', 1, opts);
+  await worker.setParameters({tessedit_char_whitelist:'0123456789', tessedit_pageseg_mode:'7'});
+  plateWorker = await Tesseract.createWorker('eng', 1, opts);
+  await plateWorker.setParameters({tessedit_char_whitelist:'0123456789-.,:hHabcdefgijklmnoprstuvwyzABCDEFGIJKLMNOPRSTUVWYZ ',
+                                   tessedit_pageseg_mode:'6'});
+}
+
+async function readOnePlate(p){
+  const pb = preparePlate(p);
+  const sym = plateSymbol(pb);
+  let cond = null, text = '';
+  try { const r = await plateWorker.recognize(pcan); text = r.data.text || ''; cond = parsePlateText(text); } catch(e){}
+  // Shapes only count for pictogram plates: if real words were read, it's a text plate we couldn't parse.
+  // A vehicle silhouette on a plate only a few pixels high is a guess: wait until we're closer.
+  const wordy = /[a-zäöü]{3,}/i.test(text);
+  const symOk = sym && !wordy && !(sym.type === 'vehicle' && p.h < 20) ? sym : null;
+  return cond || symOk || {type:'unknown'};
+}
+// A sign can carry up to two plates, e.g. a lorry symbol and "22-6h".
+async function readPlate(c){
+  const p = findPlate(c);
+  if (!p) return {plates:[], cond:null};
+  const conds = [await readOnePlate(p)], plates = [p];
+  const p2 = findPlate({x:c.x, y:p.y + p.h - c.h, w:c.w, h:c.h});
+  if (p2){ plates.push(p2); conds.push(await readOnePlate(p2)); }
+  return {plates, cond: mergeConds(conds)};
+}
+
+/* ---------- town sign text ---------- */
+async function readTownText(t){
+  const H = 64, W = Math.max(60, Math.round(H * t.w / t.h)), pad = 10;
+  pcan.width = W + pad * 2; pcan.height = H + pad * 2;
+  plctx.fillStyle = '#fff'; plctx.fillRect(0, 0, pcan.width, pcan.height);
+  plctx.drawImage(video, t.x + t.w * 0.04, t.y + t.h * 0.06, t.w * 0.92, t.h * 0.88, pad, pad, W, H);
+  const img = plctx.getImageData(0, 0, pcan.width, pcan.height), d = img.data, lum = new Uint8Array(d.length / 4);
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){
+    const r = d[q], g = d[q+1], b = d[q+2];
+    lum[i] = (r > 90 && r > g * 1.5 && r > b * 1.3) ? 255 : Math.round(0.299 * r + 0.587 * g + 0.114 * b);   // red stripe -> background
+  }
+  const thr = otsu(lum);
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = lum[i] <= thr ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
+  plctx.putImageData(img, 0, 0);
+  try { return ((await plateWorker.recognize(pcan)).data.text || '').trim(); } catch(e){ return ''; }
+}
+function looksLikeTownName(text){
+  const t = text.toLowerCase();
+  if (!/[a-zäöü]{3,}/.test(t)) return false;            // a place name has letters
+  if (/^\W*b\s*\d/.test(t) || /\b(dhl|post|taxi)\b/.test(t)) return false;   // B-road number plate, vans
+  return true;
+}
+
+/* Town entered/left, or end-of-limit sign: these reset the limit to the general one. */
+function areaEvent(kind){
+  const now = Date.now(), key = 'area:' + kind;
+  st.reads = st.reads.filter(r => now - r.t < 3500);
+  st.reads.push({key, t:now, conf:0});
+  if (st.reads.filter(r => r.key === key).length < 2) return;
+  const R = st.rule;
+  // a speed sign mounted on the same post as the town sign wins over the general limit
+  const keepSign = R.base && (R.base.src || 'sign') === 'sign' && now - R.base.time < 1500;
+  const AREA = {in:'town', out:'rural', ab:'autobahn', ab_end:'rural', kfs:'kfs', kfs_end:'rural', calm:'calm', calm_end:'town'};
+  if (AREA[kind]){
+    const k = AREA[kind];
+    if (st.area.kind === k && now - st.area.time < 60000){ st.area.time = now; return; }   // same sign, still in view
+    st.area = {kind:k, time:now};
+    if (!keepSign) R.base = {value:defaultLimit(), time:now, src:k, why:kind};
+  } else {
+    if (now - st.lastEnd < 8000){ st.lastEnd = now; return; }
+    st.lastEnd = now;
+    const dv = defaultLimit();
+    R.base = dv != null ? {value:dv, time:now, src:'end'} : null;
+    R.endTime = now;
+  }
+  R.conds = []; R.prevBase = null;
+  render();
+}
+
+/* ---------- combining reads ---------- */
+function condKey(c){
+  if (!c) return 'none';
+  if (c.type === 'time') return 'time' + c.from + '-' + c.to + (c.days || '');
+  if (c.type === 'days') return 'days' + c.days;
+  if (c.type === 'vehicle') return 'vehicle' + c.who + (c.label || '') + '/' + condKey(c.extra);
+  return c.type;
+}
+function accept(v, conf, cond, led){
+  const now = Date.now();
+  const key = v + '|' + condKey(cond);
+  st.reads = st.reads.filter(r => now - r.t < 3500);
+  st.reads.push({key, t:now, conf});
+  const same = st.reads.filter(r => r.key === key).length;
+  // when did we start seeing this sign? Signs on the same post are seen at the same time.
+  const sk = st.seen[key];
+  if (!sk || now - sk.last > 1500) st.seen[key] = {first:now, last:now}; else sk.last = now;
+  const first = st.seen[key].first, samePost = t => t >= first - 1000;
+  if (!(same >= 2 || conf >= 88)) return;
+  const R = st.rule;
+  // Same sign as a conditional one we just read, but the plate under it is out of view or unreadable now.
+  const twin = R.conds.find(c => c.value === v && now - c.time < 4000 && c.cond.type !== 'unknown');
+  if (twin && (!cond || cond.type === 'unknown')){ twin.time = now; render(); return; }
+  if (twin && cond.type === 'time' && !cond.days && twin.cond.type === 'time' && twin.cond.days &&
+      twin.cond.from === cond.from && twin.cond.to === cond.to) cond = twin.cond;
+  if (!cond){
+    if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base.time = now; R.base.led = led; }
+    else { R.prevBase = R.base; R.base = {value:v, time:now, led}; }
+    R.conds = R.conds.filter(c => samePost(c.time));              // conditional limits from earlier posts end here
+  } else {
+    // The plate was too small to see on earlier reads: this sign was taken as a plain limit. Undo that.
+    if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base = R.prevBase; }
+    R.conds = R.conds.filter(c => samePost(c.time) && !(c.value === v && (c.cond.type === cond.type || c.cond.type === 'unknown')));
+    R.conds.push({value:v, cond, time:now, led});
+  }
+  render();
+}
+
+function drawBoxes(list){
+  const ew = overlay.clientWidth, eh = overlay.clientHeight;
+  if (overlay.width !== ew || overlay.height !== eh){ overlay.width = ew; overlay.height = eh; }
+  octx.clearRect(0, 0, ew, eh);
+  if (!S.debug) return;
+  const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return;
+  const sc = Math.max(ew / vw, eh / vh), ox = (ew - vw * sc) / 2, oy = (eh - vh * sc) / 2;
+  octx.lineWidth = 2;
+  list.forEach(b => { octx.strokeStyle = b.color; octx.strokeRect(b.x * sc + ox, b.y * sc + oy, b.w * sc, b.h * sc); });
+}
+
+async function loop(){
+  if (!st.running) return;
+  if (!busy && worker && video.readyState >= 2 && document.visibilityState === 'visible'){
+    busy = true;
+    const boxes = [], found = [];
+    try {
+      const found0 = findCandidates(), cands = found0.signs;
+      for (const t of found0.towns){
+        const text = await readTownText(t);
+        const ok = looksLikeTownName(text);
+        if (ok){ areaEvent(t.end ? 'out' : 'in'); found.push({town: t.end ? 'out' : 'in', text}); }
+        boxes.push(Object.assign({color: ok ? '#ff9f1c' : '#ffd166'}, t));
+      }
+      for (const bsign of found0.blues){
+        const kind = classifyBlue(bsign);
+        let ok = !!kind;
+        if (ok && kind === 'calm'){    // make sure it isn't a blue sign with words on it
+          pcan.width = bcan.width; pcan.height = bcan.height; plctx.drawImage(bcan, 0, 0);
+          try { ok = !/[a-zäöü]{3,}/i.test((await plateWorker.recognize(pcan)).data.text || ''); } catch(e){}
+        }
+        if (ok){ const ev = {autobahn:'ab', kfs:'kfs', calm:'calm'}[kind] + (bsign.end ? '_end' : ''); areaEvent(ev); found.push({blue: ev}); }
+        boxes.push(Object.assign({color: ok ? '#4cc9f0' : '#ffd166'}, bsign));
+      }
+      for (const e of found0.ends){ areaEvent('end'); found.push({end:true}); boxes.push(Object.assign({color:'#c77dff'}, e)); }
+      for (const c of cands){
+        const res = await worker.recognize(prepareCrop(c));
+        const v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+        if (v && VALID[S.unit].includes(v) && res.data.confidence >= 55){
+          let cond = null;
+          if (c.kind === 'print'){
+            const pr = await readPlate(c);
+            cond = pr.cond;
+            pr.plates.forEach(pl => boxes.push(Object.assign({color:'#4ea1ff'}, pl)));
+          }
+          accept(v, res.data.confidence, cond, c.kind === 'led');
+          boxes.push(Object.assign({color:'#3ddc84'}, c));
+          found.push({v, kind:c.kind, cond});
+        } else boxes.push(Object.assign({color:'#ffd166'}, c));
+      }
+      drawBoxes(boxes);
+      window.__signviewLast = {cands: cands.length, found};
+    } catch(e){ console.warn('signview', e && e.message); }
+    busy = false;
+  }
+  setTimeout(loop, 150);
+}
+
+/* ================= start / settings UI ================= */
+async function start(){
+  $('err').textContent = '';
+  unlockAudio(); keepAwake();
+  initMapMode();
+  startLocation();
+  try { await startCamera(); }
+  catch(e){
+    $('err').textContent = 'Camera could not start (' + (e.name || e) + '). On iPhone, open this page in Safari over https and allow Camera.';
+    return;
+  }
+  $('startSheet').hidden = true;
+  st.running = true; render();
+  try { await initReader(); $('camState').textContent = 'reading'; }
+  catch(e){ $('camState').textContent = 'reader failed to load'; console.warn(e); return; }
+  loop();
+}
+$('startBtn').onclick = start;
+
+function openSettings(){
+  $('setUnit').value = S.unit; $('setTol').value = S.tol; $('setSound').checked = S.sound; $('setWet').value = S.wet; $('setCountry').value = S.country;
+  $('setOsm').checked = S.osm; $('setDebug').checked = S.debug; $('setKey').value = S.key;
+  $('settingsSheet').hidden = false;
+}
+$('settingsBtn').onclick = openSettings;
+$('startSettingsBtn').onclick = openSettings;
+$('closeSettings').onclick = () => { $('settingsSheet').hidden = true; };
+$('saveSettings').onclick = () => {
+  const keyChanged = $('setKey').value.trim() !== S.key;
+  const unitChanged = $('setUnit').value !== S.unit;
+  S = {unit:$('setUnit').value, tol:Math.max(0, +$('setTol').value || 0), sound:$('setSound').checked, wet:$('setWet').value, vehicle:'car', country:$('setCountry').value,
+       osm:$('setOsm').checked, debug:$('setDebug').checked, key:$('setKey').value.trim()};
+  saveSettings(S);
+  $('settingsSheet').hidden = true;
+  if (unitChanged){ st.rule = {base:null, prevBase:null, conds:[]}; st.mapLimit = null; osmLast = null; }
+  if (keyChanged && st.running) location.reload();
+  maybeWeather(); render();
+};
+render();
+})();
+</script>
+</body>
+</html>
