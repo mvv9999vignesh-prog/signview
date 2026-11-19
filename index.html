@@ -7,133 +7,185 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SignView">
-<meta name="theme-color" content="#111418">
+<meta name="theme-color" content="#15181b">
 <title>SignView</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* Road-sign palette: asphalt, traffic red, traffic yellow, signal blue, sign white. Type: a DIN-like condensed face. */
   :root{
-    --bg:#111418; --panel:#1a1f26; --text:#f2f4f7; --muted:#9aa4b2;
-    --red:#d62828; --ok:#2e9d5b; --warn:#f2a900; --line:#2a313b;
+    --asphalt:#15181b; --graphite:#23282d; --kerb:#3a4148; --line:#eceee9; --muted:#a3abb3;
+    --red:#c8102e; --yellow:#f2b705; --blue:#1d5fa8; --white:#f7f7f4;
     --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
+    --font:"Barlow Semi Condensed","DIN Alternate","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;background:var(--bg);color:var(--text);
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
-    -webkit-tap-highlight-color:transparent;overflow:hidden;overscroll-behavior:none}
-  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+  html,body{height:100%;background:var(--asphalt);color:var(--line);font-family:var(--font);
+    -webkit-tap-highlight-color:transparent;overflow:hidden;overscroll-behavior:none;font-variant-numeric:tabular-nums}
+  button,select,input{font-family:inherit}
+  :focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
 
-  /* Top 3/4: map */
-  #mapPane{position:relative;flex:0 0 75%;background:#20262e;overflow:hidden}
-  #gmap,#gframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-  #gframe{display:none}
-  #mapMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    text-align:center;padding:24px;color:var(--muted);font-size:15px;line-height:1.4;pointer-events:none}
-  .fab{position:absolute;right:12px;width:44px;height:44px;border-radius:22px;border:0;
-    background:rgba(17,20,24,.82);color:var(--text);font-size:20px;display:flex;align-items:center;
-    justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:5}
-  #settingsBtn{top:calc(12px + var(--safe-top))}
-  #recenterBtn{top:calc(64px + var(--safe-top));display:none;font-size:13px;width:auto;padding:0 14px}
-  #condChips{position:absolute;left:12px;top:calc(12px + var(--safe-top));display:flex;gap:6px;z-index:5}
-  .chip{background:rgba(17,20,24,.82);color:var(--text);font-size:12px;padding:5px 9px;border-radius:14px;
-    box-shadow:0 2px 8px rgba(0,0,0,.35)}
-
-  /* Bottom 1/4: sign reader */
-  #signPane{position:relative;flex:1 1 25%;display:flex;gap:10px;align-items:stretch;
-    padding:10px 12px calc(10px + var(--safe-bot));background:var(--panel);border-top:1px solid var(--line);
-    transition:background .25s}
-  body.over #signPane{background:#5a0f0f;animation:pulse 1s infinite alternate}
-  @keyframes pulse{from{background:#5a0f0f}to{background:#8a1414}}
-  #camWrap{position:relative;flex:0 0 31%;border-radius:10px;overflow:hidden;background:#000}
-  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  /* the road ahead, live, behind everything */
+  #camWrap{position:fixed;inset:0;background:var(--asphalt)}
+  #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(.85) brightness(.8)}
   #overlay{position:absolute;inset:0;width:100%;height:100%}
-  #camState{position:absolute;left:6px;bottom:5px;font-size:10px;color:#fff;
-    background:rgba(0,0,0,.55);padding:2px 6px;border-radius:6px}
-  #limitBox{flex:1.15 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}
-  #signWrap{position:relative;height:min(100%,calc(100% - 34px));max-height:112px;aspect-ratio:1}
-  #sign{width:100%;height:100%;border-radius:50%;
-    background:#fff;border:clamp(7px,2.2vh,11px) solid var(--red);display:flex;align-items:center;
-    justify-content:center;color:#111;font-weight:800;font-size:clamp(24px,6vh,44px);
-    letter-spacing:-1px;font-variant-numeric:tabular-nums}
-  #sign.none{border-color:#59626e;color:#59626e}
-  #sign.led{background:#0b0b0b;color:#fff;box-shadow:0 0 0 3px #0b0b0b}
-  #sign.nolimit{border:3px solid #222;color:transparent;
-    background:repeating-linear-gradient(-45deg,#fff 0 9px,#3a3a3a 9px 12px)}
-  #sign.walk{font-size:clamp(22px,5vh,40px)}
-  #badge{position:absolute;right:-6px;top:-6px;min-width:26px;height:26px;border-radius:13px;padding:0 5px;
-    background:#2f7cf6;color:#fff;font-size:14px;display:none;align-items:center;justify-content:center;
-    border:2px solid var(--panel)}
-  #limitSrc,#condNote{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;
-    text-overflow:ellipsis;max-width:100%;line-height:1.35}
-  #limitSrc{margin-top:4px}
-  #condNote{color:#c9d3df}
-  #speedBox{flex:0.9 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}
-  #speedVal{font-size:clamp(34px,8.5vh,64px);font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
-  body.over #speedVal{color:#ffd0d0}
-  #speedUnit{font-size:12px;color:var(--muted);margin-top:4px}
+  #shade{position:fixed;inset:0;pointer-events:none;
+    background:linear-gradient(to bottom,rgba(21,24,27,.75) 0,rgba(21,24,27,.15) 22%,rgba(21,24,27,.2) 45%,rgba(21,24,27,.92) 72%,var(--asphalt) 100%)}
 
-  /* Start + settings sheets */
-  .sheet{position:fixed;inset:0;z-index:20;background:rgba(10,12,15,.97);display:flex;
-    flex-direction:column;padding:calc(24px + var(--safe-top)) 22px calc(24px + var(--safe-bot));
-    overflow-y:auto}
-  #startSheet{justify-content:center}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column;pointer-events:none;
+    padding:calc(10px + var(--safe-top)) 16px calc(14px + var(--safe-bot))}
+  #top{pointer-events:auto}
+  /* everything else lets taps through to the camera picture (used for saving a photo) */
+
+  /* status row */
+  #top{display:flex;align-items:center;gap:8px;min-height:44px}
+  #chips{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:15px;
+    background:rgba(35,40,45,.78);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    font-size:15px;font-weight:600;color:var(--line);white-space:nowrap}
+  .chip i{width:8px;height:8px;border-radius:4px;background:var(--muted)}
+  .chip.ok i{background:#7fd38b} .chip.bad i{background:var(--red)}
+  .chip.town{background:var(--yellow);color:#16130a}
+  .chip.autobahn,.chip.kfs,.chip.calm{background:var(--blue);color:#fff}
+  #settingsBtn{width:44px;height:44px;border:0;border-radius:22px;background:rgba(35,40,45,.78);color:var(--line);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:grid;place-items:center;cursor:pointer}
+  #settingsBtn svg{width:22px;height:22px}
+
+  /* the sign: the one big thing */
+  #signArea{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;gap:10px}
+  #signWrap{position:relative;width:min(62vw,40vh,320px);aspect-ratio:1}
+  #sign{width:100%;height:100%;border-radius:50%;background:var(--white);
+    border:calc(min(62vw,40vh,320px) * .1) solid var(--red);display:flex;align-items:center;justify-content:center;
+    color:#111;font-weight:700;font-size:calc(min(62vw,40vh,320px) * .42);letter-spacing:-.02em;line-height:1;
+    box-shadow:0 0 0 calc(min(62vw,40vh,320px) * .018) var(--white),0 18px 50px rgba(0,0,0,.55)}
+  #sign.long{font-size:calc(min(62vw,40vh,320px) * .33)}
+  #sign.none{background:rgba(35,40,45,.6);border-color:var(--kerb);color:var(--muted);box-shadow:none;
+    font-size:calc(min(62vw,40vh,320px) * .14);font-weight:600;letter-spacing:0}
+  #sign.led{background:#0d0f10;color:#fff7d6;box-shadow:0 0 0 calc(min(62vw,40vh,320px) * .05) #0d0f10,0 18px 50px rgba(0,0,0,.55)}
+  #sign.nolimit{border:calc(min(62vw,40vh,320px) * .02) solid #2b2b2b;color:transparent;
+    background:repeating-linear-gradient(-45deg,var(--white) 0 8%,#2b2b2b 8% 10.5%)}
+  #sign.walk{border-radius:10%;border-color:var(--white);background:var(--blue);color:#fff;font-size:calc(min(62vw,40vh,320px) * .4)}
+  #sign.fresh{animation:arrive .45s cubic-bezier(.2,.9,.3,1.2)}
+  @keyframes arrive{from{transform:scale(.82);opacity:.4}to{transform:scale(1);opacity:1}}
+  #badge{position:absolute;right:-2%;bottom:2%;min-width:30%;height:30%;padding:0 6%;border-radius:999px;display:none;
+    align-items:center;justify-content:center;background:var(--white);color:#111;border:3px solid var(--asphalt);
+    font-size:calc(min(62vw,40vh,320px) * .14);font-weight:700}
+  #limitSrc{font-size:19px;font-weight:600;color:var(--line);text-align:center;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+  #condNote{font-size:16px;color:var(--muted);text-align:center;min-height:20px;max-width:34ch;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+
+  /* speed */
+  #speedBox{display:grid;grid-template-columns:auto 1fr;align-items:end;column-gap:14px;padding:6px 2px 0}
+  #speedVal{font-size:min(28vw,15vh,132px);font-weight:700;line-height:.82;letter-spacing:-.03em;transition:color .2s}
+  #speedMeta{padding-bottom:6px;display:flex;flex-direction:column;gap:10px;min-width:0}
+  #speedUnit{font-size:22px;font-weight:600;color:var(--muted)}
+  #bar{position:relative;height:10px;border-radius:5px;background:var(--kerb)}
+  #barFill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:5px;background:var(--line);transition:width .5s,background .2s}
+  #barMark{position:absolute;top:-6px;bottom:-6px;width:4px;border-radius:2px;background:var(--red);left:0;display:none}
+  #camState{font-size:14px;color:var(--muted)}
+  body.near #speedVal{color:var(--yellow)} body.near #barFill{background:var(--yellow)}
+  body.over #speedVal{color:#ff5a5a} body.over #barFill{background:var(--red)}
+  body.over #shade{animation:warn 1s ease-in-out infinite alternate}
+  @keyframes warn{to{box-shadow:inset 0 -40vh 80px -40px rgba(200,16,46,.55)}}
+
+  /* signs passed */
+  #history{display:flex;align-items:center;gap:10px;min-height:44px;margin-top:14px;overflow:hidden}
+  #history:empty::before{content:"Signs you pass will be listed here";color:var(--muted);font-size:15px}
+  .past{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:14px;flex-shrink:0}
+  .mini{width:36px;height:36px;border-radius:50%;background:var(--white);border:4px solid var(--red);color:#111;
+    display:grid;place-items:center;font-weight:700;font-size:15px}
+  .mini.town{border-radius:4px;width:44px;height:28px;border:2px solid #111;background:var(--yellow);font-size:11px}
+  .mini.town.out{background:linear-gradient(to top right,var(--yellow) 44%,var(--red) 45% 55%,var(--yellow) 56%)}
+  .mini.blue{border-radius:6px;border:2px solid #fff;background:var(--blue);color:#fff;font-size:12px}
+  .mini.end{border:2px solid #2b2b2b;background:repeating-linear-gradient(-45deg,var(--white) 0 4px,#2b2b2b 4px 6px)}
+
+  /* landscape: sign left, speed right */
+  @media (orientation:landscape){
+    #app{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto;column-gap:24px}
+    #top{grid-column:1 / -1}
+    #signArea{grid-row:2 / 4}
+    #speedBox{align-self:center}
+    #signWrap{width:min(40vw,62vh,320px)}
+    #shade{background:linear-gradient(to right,rgba(21,24,27,.55) 0,rgba(21,24,27,.35) 40%,rgba(21,24,27,.88) 70%)}
+  }
+  @media (prefers-reduced-motion:reduce){ #sign.fresh, body.over #shade{animation:none} }
+
+  /* start + settings sheets */
+  .sheet{position:fixed;inset:0;z-index:20;background:var(--asphalt);display:flex;flex-direction:column;
+    padding:calc(28px + var(--safe-top)) 22px calc(22px + var(--safe-bot));overflow-y:auto}
   .sheet[hidden]{display:none}
-  .sheet h1{font-size:30px;margin-bottom:6px}
-  .sheet h2{font-size:22px;margin-bottom:14px}
-  .sheet p,.sheet li{color:var(--muted);font-size:15px;line-height:1.45}
-  .sheet ul{margin:14px 0 22px 18px}
-  .btn{display:block;width:100%;border:0;border-radius:12px;padding:15px;font-size:17px;font-weight:700;
-    background:#2f7cf6;color:#fff;margin-top:10px;flex-shrink:0}
-  .btn.secondary{background:#2a313b}
-  label.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;
-    border-bottom:1px solid var(--line);font-size:15px}
-  label.row span small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-  input[type=text],select,input[type=number]{background:#1f252d;color:var(--text);border:1px solid #39424e;
-    border-radius:8px;padding:9px 10px;font-size:15px}
-  input[type=text]{width:100%;margin-top:8px}
-  input[type=number]{width:70px}
-  .keyrow{flex-direction:column;align-items:stretch}
-  #err{color:#ff9b9b;margin-top:12px;font-size:14px}
+  #startSheet{justify-content:flex-end;background:radial-gradient(120% 70% at 50% 18%,#2a3036 0,var(--asphalt) 70%)}
+  .hero{flex:1;display:flex;align-items:center;justify-content:center}
+  .hero .demo{width:min(56vw,240px);aspect-ratio:1;border-radius:50%;background:var(--white);border:calc(min(56vw,240px) * .1) solid var(--red);
+    display:grid;place-items:center;color:#111;font-weight:700;font-size:calc(min(56vw,240px) * .42);box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .sheet h1{font-size:44px;font-weight:700;line-height:1;margin-bottom:10px}
+  .sheet h2{font-size:30px;font-weight:700;margin-bottom:6px}
+  .sheet p{color:var(--muted);font-size:18px;line-height:1.35;max-width:36ch}
+  .steps{margin:18px 0 22px;display:grid;gap:10px;font-size:18px;color:var(--line);list-style:none}
+  .steps li{display:flex;gap:12px;align-items:baseline}
+  .steps b{flex:0 0 26px;height:26px;border-radius:13px;background:var(--graphite);display:grid;place-items:center;font-size:15px}
+  .btn{display:block;width:100%;border:0;border-radius:14px;padding:16px;font-size:20px;font-weight:700;
+    background:var(--yellow);color:#16130a;margin-top:10px;flex-shrink:0;cursor:pointer}
+  .btn.secondary{background:var(--graphite);color:var(--line)}
+  #err{color:#ff8a8a;margin-top:12px;font-size:16px}
+  .group{background:var(--graphite);border-radius:14px;margin:14px 0 4px;padding:0 14px}
+  .group h3{font-size:15px;font-weight:600;color:var(--muted);padding:12px 0 0}
+  label.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;font-size:18px}
+  label.row + label.row{border-top:1px solid var(--kerb)}
+  label.row span small{display:block;color:var(--muted);font-size:14px;margin-top:3px;line-height:1.3}
+  select,input[type=number]{background:var(--asphalt);color:var(--line);border:1px solid var(--kerb);border-radius:9px;padding:8px 10px;font-size:17px}
+  input[type=number]{width:72px}
+  input[type=checkbox]{appearance:none;-webkit-appearance:none;width:50px;height:30px;border-radius:15px;background:var(--kerb);position:relative;flex-shrink:0;cursor:pointer;transition:background .2s}
+  input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:#fff;transition:transform .2s}
+  input[type=checkbox]:checked{background:#3f9a52} input[type=checkbox]:checked::after{transform:translateX(20px)}
+  .sheetbar{display:flex;gap:10px;margin-top:auto;padding:16px 0 4px;position:sticky;bottom:0;background:var(--asphalt)}
+  .sheetbar .btn{margin-top:0}
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="mapPane">
-    <div id="gmap"></div>
-    <iframe id="gframe" title="Google Maps" referrerpolicy="no-referrer-when-downgrade" allow="geolocation"></iframe>
-    <div id="mapMsg">Waiting for your location…</div>
-    <div id="condChips"></div>
-    <button class="fab" id="settingsBtn" aria-label="Settings">⚙︎</button>
-    <button class="fab" id="recenterBtn">Re-centre</button>
-  </div>
-  <div id="signPane">
-    <div id="camWrap">
-      <video id="cam" playsinline muted autoplay></video>
-      <canvas id="overlay"></canvas>
-      <div id="camState">camera off</div>
-    </div>
-    <div id="limitBox">
-      <div id="signWrap">
-        <div id="sign" class="none"><span id="limitVal">–</span></div>
-        <div id="badge"></div>
-      </div>
-      <div id="limitSrc">no limit yet</div>
-      <div id="condNote"></div>
-    </div>
-    <div id="speedBox">
-      <div id="speedVal">–</div>
-      <div id="speedUnit">km/h</div>
-    </div>
-  </div>
+<div id="camWrap">
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
 </div>
+<div id="shade"></div>
+
+<main id="app">
+  <div id="top">
+    <div id="chips" aria-live="polite"></div>
+    <button id="settingsBtn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+    </button>
+  </div>
+
+  <section id="signArea" aria-live="polite">
+    <div id="signWrap">
+      <div id="sign" class="none"><span id="limitVal">No sign yet</span></div>
+      <div id="badge"></div>
+    </div>
+    <div id="limitSrc">Tap Start to begin</div>
+    <div id="condNote"></div>
+  </section>
+
+  <section id="speedBox">
+    <div id="speedVal">–</div>
+    <div id="speedMeta">
+      <div id="speedUnit">km/h</div>
+      <div id="bar" aria-hidden="true"><div id="barFill"></div><div id="barMark"></div></div>
+      <div id="camState">Camera off</div>
+    </div>
+  </section>
+  <div id="history" aria-label="Signs passed"></div>
+</main>
 
 <div class="sheet" id="startSheet">
+  <div class="hero"><div class="demo">50</div></div>
   <h1>SignView</h1>
-  <p>Google Maps on top, and your phone camera reading speed-limit signs below, including the extra plates under them
-    (times, rain, night) and electronic motorway signs.</p>
-  <ul>
-    <li>Mount the phone upright on the windscreen with the back camera facing the road.</li>
-    <li>Tap Start, then allow Camera and Location.</li>
-    <li>Keep the screen on and the phone charging. Don't touch it while driving.</li>
-  </ul>
+  <p>Reads speed signs through your phone's camera and warns you when you're over the limit.</p>
+  <ol class="steps">
+    <li><b>1</b>Mount the phone upright, back camera facing the road.</li>
+    <li><b>2</b>Tap Start, then allow Camera and Location.</li>
+    <li><b>3</b>Keep it on charge. Don't touch it while driving.</li>
+  </ol>
   <button class="btn" id="startBtn">Start</button>
   <button class="btn secondary" id="startSettingsBtn">Settings</button>
   <div id="err"></div>
@@ -141,25 +193,30 @@
 
 <div class="sheet" id="settingsSheet" hidden>
   <h2>Settings</h2>
-  <label class="row"><span>Units<small>Use mph in the UK, km/h elsewhere in Europe</small></span>
-    <select id="setUnit"><option value="kmh">km/h</option><option value="mph">mph</option></select></label>
-  <label class="row"><span>Warn when over the limit by<small>In the units above</small></span>
-    <input type="number" id="setTol" min="0" max="20" step="1"></label>
-  <label class="row"><span>Warning beep</span><input type="checkbox" id="setSound"></label>
-  <label class="row"><span>Country rules<small>Germany: yellow town signs mean 50, leaving a town means 100</small></span>
-    <select id="setCountry"><option value="de">Germany</option><option value="other">Other (signs only)</option></select></label>
-  <label class="row"><span>Wet road<small>For limits that apply only in rain. Auto uses live weather at your location.</small></span>
-    <select id="setWet"><option value="auto">Auto</option><option value="on">Always wet</option><option value="off">Always dry</option></select></label>
-  <label class="row"><span>Use map data for limits<small>OpenStreetMap limits when no sign has been read</small></span>
-    <input type="checkbox" id="setOsm"></label>
-  <label class="row"><span>Show detection boxes<small>Green: sign read. Blue: plate. Orange: town sign. Purple: end sign. Yellow: found but not confirmed.
-    While this is on, tap the camera view to save a photo of what the camera sees.</small></span>
-    <input type="checkbox" id="setDebug"></label>
-  <label class="row keyrow"><span>Google Maps API key (optional)<small>Without a key you get the standard embedded Google Map, which
-    re-centres every few hundred metres. With a key the map follows you smoothly.</small></span>
-    <input type="text" id="setKey" placeholder="AIza…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-  <button class="btn" id="saveSettings">Save</button>
-  <button class="btn secondary" id="closeSettings">Cancel</button>
+  <div class="group">
+    <label class="row"><span>Units<small>mph in the UK, km/h elsewhere in Europe</small></span>
+      <select id="setUnit"><option value="kmh">km/h</option><option value="mph">mph</option></select></label>
+    <label class="row"><span>Warn when over by<small>In the units above</small></span>
+      <input type="number" id="setTol" min="0" max="20" step="1"></label>
+    <label class="row"><span>Warning beep</span><input type="checkbox" id="setSound"></label>
+  </div>
+  <div class="group">
+    <label class="row"><span>Country rules<small>Germany: yellow town signs mean 50, leaving a town means 100</small></span>
+      <select id="setCountry"><option value="de">Germany</option><option value="other">Other (signs only)</option></select></label>
+    <label class="row"><span>Wet road<small>For limits that apply only in rain. Auto uses live weather where you are.</small></span>
+      <select id="setWet"><option value="auto">Auto</option><option value="on">Always wet</option><option value="off">Always dry</option></select></label>
+    <label class="row"><span>Use map data<small>OpenStreetMap limits until the first sign is read</small></span>
+      <input type="checkbox" id="setOsm"></label>
+  </div>
+  <div class="group">
+    <label class="row"><span>Show detection boxes<small>Green: sign read. Blue: plate. Orange: town sign. Purple: end sign. Yellow: found, not confirmed.
+      While on, tap the camera picture to save a photo for checking.</small></span>
+      <input type="checkbox" id="setDebug"></label>
+  </div>
+  <div class="sheetbar">
+    <button class="btn secondary" id="closeSettings">Cancel</button>
+    <button class="btn" id="saveSettings">Save</button>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
@@ -168,7 +225,7 @@
 'use strict';
 
 /* ================= settings ================= */
-const DEFAULTS = {unit:'kmh', tol:3, sound:true, osm:true, debug:false, key:'', wet:'auto', vehicle:'car', country:'de'};
+const DEFAULTS = {unit:'kmh', tol:3, sound:true, osm:true, debug:false, wet:'auto', vehicle:'car', country:'de'};
 function loadSettings(){
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('signview') || '{}')); }
   catch(e){ return Object.assign({}, DEFAULTS); }
@@ -193,7 +250,7 @@ const st = {
   pos:null, speedMs:null, heading:null, lastFix:null,
   rule:{base:null, prevBase:null, conds:[]},
   mapLimit:null, mapLimitChangedAt:0,
-  reads:[], seen:{}, odo:0, area:{kind:null, time:0}, lastEnd:0,
+  reads:[], seen:{}, odo:0, history:[], lastLim:null, gpsErr:null, area:{kind:null, time:0}, lastEnd:0,
   wx:null,              // {wet:boolean, time}
   running:false
 };
@@ -378,62 +435,98 @@ function ago(t){
   const s = Math.round((Date.now() - t) / 1000);
   return s < 60 ? s + 's ago' : Math.round(s / 60) + ' min ago';
 }
+const AREA_CHIP = {town:['town','In town'], calm:['calm','Traffic-calmed'], rural:['','Outside town'], kfs:['kfs','Expressway'], autobahn:['autobahn','Autobahn']};
+let lastShownKey = '';
+function signKey(lim){ return lim ? lim.value + '|' + lim.src + '|' + (lim.led ? 1 : 0) + '|' + st.area.kind : ''; }
+function historyItem(lim){
+  // a small picture of the sign that was on screen before this one
+  let cls = 'mini', txt = lim.value === Infinity ? '' : lim.value;
+  if (lim.value === Infinity || lim.src === 'end') { cls += ' end'; txt = ''; }
+  if (lim.src === 'town') { cls += ' town'; txt = '50'; }
+  if (lim.src === 'rural' && lim.why === 'out') { cls += ' town out'; txt = ''; }
+  if (lim.src === 'autobahn' || lim.src === 'kfs' || lim.src === 'calm') { cls += ' blue'; txt = lim.src === 'calm' ? '🚶' : lim.src === 'autobahn' ? 'A' : 'K'; }
+  return {cls, txt, time: Date.now()};
+}
 function render(){
   const lim = currentLimit();
   const sign = $('sign'), badge = $('badge');
   if (lim){
     const noLimit = lim.value === Infinity, walk = !noLimit && lim.src !== 'sign' && st.area.kind === 'calm';
+    const key = signKey(lim);
+    if (key !== lastShownKey){
+      if (lastShownKey && st.lastLim){ st.history.unshift(historyItem(st.lastLim)); st.history = st.history.slice(0, 3); }
+      lastShownKey = key;
+      sign.classList.remove('fresh'); void sign.offsetWidth; sign.classList.add('fresh');
+    }
+    st.lastLim = lim;
     sign.classList.remove('none'); sign.classList.toggle('led', !!lim.led);
     sign.classList.toggle('nolimit', noLimit); sign.classList.toggle('walk', walk);
+    sign.classList.toggle('long', !noLimit && !walk && String(lim.value).length > 2);
     $('limitVal').textContent = noLimit ? '' : walk ? '🚶' : lim.value;
     const areaName = {town:'town', calm:'traffic-calmed area', rural:'outside-town', kfs:'expressway', autobahn:'Autobahn'}[st.area.kind] || '';
-    const ENDS = {ab_end:'End of Autobahn · general limit outside towns', kfs_end:'End of expressway · general limit outside towns',
-                  calm_end:'End of traffic-calmed area · town limit'};
+    const ENDS = {ab_end:'End of Autobahn, general limit outside towns', kfs_end:'End of expressway, general limit outside towns',
+                  calm_end:'End of traffic-calmed area, town limit'};
     $('limitSrc').textContent = ENDS[lim.why] || {
-      sign: (lim.led ? 'Electronic sign ' : 'Sign read ') + ago(lim.time),
-      town: 'Town sign · general town limit',
-      rural: 'Left town · general limit outside towns',
-      calm: 'Traffic-calmed area · walking pace',
-      kfs: 'Expressway · ' + lim.value + ' unless lanes are separated',
-      autobahn: noLimit ? 'Autobahn · no limit (130 advised)' : 'Autobahn · limit for your vehicle',
-      end: areaName ? 'End of limit · general ' + areaName + ' limit' : 'End of restrictions · general limit applies',
-      map: 'From map data'}[lim.src];
+      sign: (lim.led ? 'Electronic sign, read ' : 'Sign read ') + ago(lim.time),
+      town: 'Entered town, general town limit',
+      rural: 'Left town, general limit outside towns',
+      calm: 'Traffic-calmed area, walking pace',
+      kfs: 'Expressway, ' + lim.value + ' unless the lanes are separated',
+      autobahn: noLimit ? 'Autobahn, no limit (130 advised)' : 'Autobahn, limit for your vehicle',
+      end: areaName ? 'End of limit, general ' + areaName + ' limit' : 'End of restrictions, general limit applies',
+      map: 'From map data until a sign is read'}[lim.src];
   } else {
-    sign.classList.add('none'); sign.classList.remove('led'); $('limitVal').textContent = '–';
-    $('limitSrc').textContent = st.running ? 'Looking for signs…' : 'no limit yet';
+    sign.classList.add('none'); sign.classList.remove('led', 'nolimit', 'walk', 'long');
+    $('limitVal').textContent = st.running ? 'Looking for signs' : 'No sign yet';
+    $('limitSrc').textContent = st.running ? 'Point the camera at the road ahead' : 'Tap Start to begin';
   }
   if (lim && lim.cond){ badge.textContent = condIcon(lim.cond); badge.style.display = 'flex'; }
   else badge.style.display = 'none';
 
-  // one line about conditional limits on the current stretch
+  // one line about conditional limits on this stretch
   let note = '';
-  if (lim && lim.cond) note = condIcon(lim.cond) + ' ' + condText(lim.cond) + ' · in force';
+  if (lim && lim.cond){ const t = condText(lim.cond); note = t.charAt(0).toUpperCase() + t.slice(1) + ', in force now'; }
   else {
     const camT = cameraInfo();
     if (camT){
       const idle = st.rule.conds.filter(c => !condActive(c.cond));
       if (idle.length) note = idle.map(c => c.value + ' ' + condText(c.cond) +
-        (c.cond.type === 'unknown' ? '' : c.cond.type === 'vehicle' && !vehicleMatches(c.cond.who) ? ' (not your vehicle)' : ' (not now)')).join(' · ');
+        (c.cond.type === 'unknown' ? '' : c.cond.type === 'vehicle' && !vehicleMatches(c.cond.who) ? ' (not your vehicle)' : ' (not now)')).join(', ');
     }
   }
-  if (!note && st.rule.pending) note = st.rule.pending.value + ' in ' + Math.max(0, Math.round((st.rule.pending.atOdo - st.odo) / 10) * 10) + ' m';
-  if (!note && lim && lim.untilOdo != null) note = 'for ' + Math.max(0, Math.round((lim.untilOdo - st.odo) / 100) / 10) + ' km more';
+  if (!note && st.rule.pending) note = st.rule.pending.value + ' starts in ' + Math.max(0, Math.round((st.rule.pending.atOdo - st.odo) / 10) * 10) + ' m';
+  if (!note && lim && lim.untilOdo != null) note = 'For ' + Math.max(0, Math.round((lim.untilOdo - st.odo) / 100) / 10) + ' km more';
   $('condNote').textContent = note;
 
-  // chips on the map: what the app currently believes
+  // status chips
   const chips = [];
-  if (isNight()) chips.push('🌙 Night');
-  if (isWet()) chips.push('🌧 Wet' + (S.wet === 'on' ? ' (set)' : ''));
-  $('condChips').innerHTML = chips.map(c => '<span class="chip">' + c + '</span>').join('');
+  const gpsOk = st.lastFix && Date.now() - st.lastFix < 6000;
+  if (st.running) chips.push('<span class="chip ' + (gpsOk ? 'ok' : 'bad') + '"><i></i>' +
+    (gpsOk ? 'GPS' : st.gpsErr === 'denied' ? 'Location off' : 'Finding GPS') + '</span>');
+  if (S.country === 'de' && AREA_CHIP[st.area.kind]){ const [cls, txt] = AREA_CHIP[st.area.kind]; chips.push('<span class="chip ' + cls + '">' + txt + '</span>'); }
+  if (isWet()) chips.push('<span class="chip">🌧 Wet' + (S.wet === 'on' ? ', set by you' : '') + '</span>');
+  if (isIcy()) chips.push('<span class="chip">❄ Icy</span>');
+  if (isNight()) chips.push('<span class="chip">🌙 Night</span>');
+  $('chips').innerHTML = chips.join('');
 
+  // history of signs passed
+  $('history').innerHTML = st.history.map(h =>
+    '<span class="past"><span class="' + h.cls + '">' + h.txt + '</span>' + ago(h.time) + '</span>').join('');
+
+  // speed and the bar towards the limit
   $('speedUnit').textContent = S.unit === 'mph' ? 'mph' : 'km/h';
   let spd = null;
-  if (st.speedMs != null && st.lastFix && Date.now() - st.lastFix < 6000){
-    spd = st.speedMs * (S.unit === 'mph' ? 2.23694 : 3.6);
-    $('speedVal').textContent = Math.round(spd);
-  } else $('speedVal').textContent = '–';
-  const over = lim && spd != null && spd > lim.value + Number(S.tol);
+  if (gpsOk && st.speedMs != null){ spd = st.speedMs * (S.unit === 'mph' ? 2.23694 : 3.6); $('speedVal').textContent = Math.round(spd); }
+  else $('speedVal').textContent = '–';
+  const limV = lim && isFinite(lim.value) ? lim.value : null;
+  const scale = limV ? limV * 1.4 : (S.unit === 'mph' ? 90 : 150);
+  $('barFill').style.width = (spd == null ? 0 : Math.min(100, spd / scale * 100)) + '%';
+  const mark = $('barMark');
+  if (limV){ mark.style.display = 'block'; mark.style.left = 'calc(' + (limV / scale * 100) + '% - 2px)'; } else mark.style.display = 'none';
+  const over = limV != null && spd != null && spd > limV + Number(S.tol);
+  const near = !over && limV != null && spd != null && spd > limV;
   document.body.classList.toggle('over', !!over);
+  document.body.classList.toggle('near', !!near);
   if (over) beep();
 }
 setInterval(render, 1000);
@@ -459,60 +552,14 @@ function onFix(p){
   st.speedMs = spd == null ? st.speedMs : (st.speedMs == null ? spd : st.speedMs * 0.4 + spd * 0.6);
   if (c.heading != null && !isNaN(c.heading) && (spd || 0) > 1.5) st.heading = c.heading;
   st.pos = pos; st.lastFix = Date.now();
-  updateMap(); maybeQueryOsm(); maybeWeather(); render();
+  maybeQueryOsm(); maybeWeather(); render();
 }
 function startLocation(){
-  if (!('geolocation' in navigator)){ $('mapMsg').textContent = 'Location is not available in this browser.'; return; }
+  if (!('geolocation' in navigator)){ st.gpsErr = 'none'; return; }
   navigator.geolocation.watchPosition(onFix, e => {
-    $('mapMsg').textContent = e.code === 1
-      ? 'Location permission was refused. Allow it in Settings › Privacy › Location Services › Safari Websites.'
-      : 'Waiting for GPS…';
+    st.gpsErr = e.code === 1 ? 'denied' : 'waiting';
   }, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
 }
-
-/* ================= map ================= */
-let gmap = null, gMarker = null, follow = true, lastFrameCentre = null, mapMode = null;
-function initMapMode(){
-  if (S.key){
-    mapMode = 'js';
-    window.__initGMap = () => {
-      gmap = new google.maps.Map($('gmap'), {
-        center: st.pos || {lat:51.5, lng:0}, zoom: 17, disableDefaultUI: true,
-        gestureHandling: 'greedy', clickableIcons: false
-      });
-      gmap.addListener('dragstart', () => { follow = false; $('recenterBtn').style.display = 'flex'; });
-      $('mapMsg').style.display = 'none';
-      if (st.pos) updateMap();
-    };
-    const s = document.createElement('script');
-    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(S.key) + '&callback=__initGMap&v=weekly';
-    s.async = true;
-    s.onerror = () => { $('mapMsg').textContent = 'Could not load Google Maps with that key. Check it in Settings.'; };
-    document.head.appendChild(s);
-    window.gm_authFailure = () => { $('mapMsg').style.display='flex'; $('mapMsg').textContent = 'Google rejected the API key. Check it in Settings, or clear it to use the embedded map.'; };
-  } else mapMode = 'embed';
-}
-function updateMap(){
-  if (!st.pos) return;
-  if (mapMode === 'js' && gmap){
-    const icon = {
-      path: st.heading != null ? google.maps.SymbolPath.FORWARD_CLOSED_ARROW : google.maps.SymbolPath.CIRCLE,
-      scale: st.heading != null ? 6 : 8, rotation: st.heading || 0,
-      fillColor: '#2f7cf6', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2
-    };
-    if (!gMarker) gMarker = new google.maps.Marker({map: gmap, position: st.pos, icon, clickable:false});
-    else { gMarker.setPosition(st.pos); gMarker.setIcon(icon); }
-    if (follow) gmap.panTo(st.pos);
-  } else if (mapMode === 'embed'){
-    if (!lastFrameCentre || haversine(lastFrameCentre, st.pos) > 300){
-      lastFrameCentre = st.pos;
-      const f = $('gframe');
-      f.src = 'https://maps.google.com/maps?q=' + st.pos.lat.toFixed(6) + ',' + st.pos.lng.toFixed(6) + '&z=16&output=embed';
-      f.style.display = 'block'; $('mapMsg').style.display = 'none';
-    }
-  }
-}
-$('recenterBtn').onclick = () => { follow = true; $('recenterBtn').style.display = 'none'; updateMap(); };
 
 /* ================= OpenStreetMap limits ================= */
 let osmBusy = false, osmLast = null, osmLastT = 0;
@@ -1501,7 +1548,6 @@ $('camWrap').addEventListener('click', async () => {
 async function start(){
   $('err').textContent = '';
   unlockAudio(); keepAwake();
-  initMapMode();
   startLocation();
   try { await startCamera(); }
   catch(e){
@@ -1510,29 +1556,28 @@ async function start(){
   }
   $('startSheet').hidden = true;
   st.running = true; render();
-  try { await initReader(); $('camState').textContent = 'reading'; }
-  catch(e){ $('camState').textContent = 'reader failed to load'; console.warn(e); return; }
+  $('camState').textContent = 'Loading sign reader…';
+  try { await initReader(); $('camState').textContent = 'Reading signs'; }
+  catch(e){ $('camState').textContent = 'Sign reader didn’t load. Check your internet and reopen.'; console.warn(e); return; }
   loop();
 }
 $('startBtn').onclick = start;
 
 function openSettings(){
   $('setUnit').value = S.unit; $('setTol').value = S.tol; $('setSound').checked = S.sound; $('setWet').value = S.wet; $('setCountry').value = S.country;
-  $('setOsm').checked = S.osm; $('setDebug').checked = S.debug; $('setKey').value = S.key;
+  $('setOsm').checked = S.osm; $('setDebug').checked = S.debug;
   $('settingsSheet').hidden = false;
 }
 $('settingsBtn').onclick = openSettings;
 $('startSettingsBtn').onclick = openSettings;
 $('closeSettings').onclick = () => { $('settingsSheet').hidden = true; };
 $('saveSettings').onclick = () => {
-  const keyChanged = $('setKey').value.trim() !== S.key;
   const unitChanged = $('setUnit').value !== S.unit;
   S = {unit:$('setUnit').value, tol:Math.max(0, +$('setTol').value || 0), sound:$('setSound').checked, wet:$('setWet').value, vehicle:'car', country:$('setCountry').value,
-       osm:$('setOsm').checked, debug:$('setDebug').checked, key:$('setKey').value.trim()};
+       osm:$('setOsm').checked, debug:$('setDebug').checked};
   saveSettings(S);
   $('settingsSheet').hidden = true;
   if (unitChanged){ st.rule = {base:null, prevBase:null, conds:[]}; st.mapLimit = null; osmLast = null; }
-  if (keyChanged && st.running) location.reload();
   maybeWeather(); render();
 };
 render();
