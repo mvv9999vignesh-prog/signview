@@ -593,8 +593,9 @@ function findCandidates(){
     const r = d[p], g = d[p+1], b = d[p+2];
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
     mxa[i] = mx; mna[i] = mn;
-    // red ring: tolerant of faded, shaded and slightly orange/pink reds
-    if (r > 60 && r > g * 1.45 && r > b * 1.25 && (mx - mn) > 0.3 * mx) red0[i] = 1;
+    // Red ring: also faded, shaded and pinkish reds (as seen through glare or on a screen).
+    // Red stays clearly above both green and blue, with green and blue about equal (not orange, yellow or purple).
+    if (r > 60 && r - (g > b ? g : b) > Math.max(28, 0.17 * r) && g - b < 0.35 * (r - b) && b - g < 0.5 * (r - g)) red0[i] = 1;
     else {
       if (mn > 0.55 * mx && mx > 110) light[i] = 1;
       if (mx < 75) dark[i] = 1;
@@ -606,12 +607,16 @@ function findCandidates(){
     }
   }
   // close small gaps (LED rings are made of separate dots)
-  const mask = new Uint8Array(N);
+  const mask = new Uint8Array(N), mask0 = mask;
   for (let y = 1; y < PH - 1; y++) for (let x = 1; x < PW - 1; x++){
     const i = y * PW + x;
     if (red0[i] || red0[i-1] || red0[i+1] || red0[i-PW] || red0[i+PW]) mask[i] = 1;
   }
-  const lab = new Int32Array(N), stack = new Int32Array(N), cands = [];
+  // A second, wider gap-closing joins a ring that blur or a double image has split into pieces.
+  // (Both are tried: the wider one can also join a ring onto a sign mounted just above it.)
+  const mask2 = dilate(mask, PW, PH), cands = [];
+  for (const mask of [mask0, mask2]){
+  const lab = new Int32Array(N), stack = new Int32Array(N);
   let next = 1;
   for (let s = 0; s < N; s++){
     if (!mask[s] || lab[s]) continue;
@@ -632,6 +637,10 @@ function findCandidates(){
     const ar = w / h; if (ar < 0.6 || ar > 1.55) continue;          // allow signs seen at an angle
     const ringMx = ringN ? ringSum / ringN : 120;
     const fill = cnt / (w * h); if (fill < 0.12 || fill > 0.7) continue;
+    // a circle is as wide near its top as near its bottom; a warning triangle is not
+    const span = yy => { let l = -1, r = -1; for (let x = x0; x <= x1; x++) if (lab[yy * PW + x] === next - 1){ if (l < 0) l = x; r = x; } return l < 0 ? 0 : r - l + 1; };
+    const topW = span(y0 + Math.round(h * 0.12)), botW = span(y1 - Math.round(h * 0.12));
+    if (!topW || !botW || topW / botW < 0.4 || topW / botW > 2.5) continue;
     const cx0 = x0 + Math.round(w * 0.28), cx1 = x1 - Math.round(w * 0.28);
     const cy0 = y0 + Math.round(h * 0.28), cy1 = y1 - Math.round(h * 0.28);
     let tot = 0, red = 0, lt = 0, dk = 0, br = 0;
@@ -648,7 +657,10 @@ function findCandidates(){
     else if (dk / tot >= 0.4 && br / tot >= 0.04 && br / tot <= 0.55) kind = 'led';
     if (!kind) continue;
     const sc = vw / PW;
-    cands.push({x:x0 * sc, y:y0 * sc, w:w * sc, h:h * sc, size:w * h, kind});
+    const dup = cands.some(c => { const ix = Math.max(0, Math.min(c.px1, x1) - Math.max(c.px0, x0)), iy = Math.max(0, Math.min(c.py1, y1) - Math.max(c.py0, y0));
+                                  return ix * iy > 0.5 * Math.min(w * h, (c.px1 - c.px0) * (c.py1 - c.py0)); });
+    if (!dup) cands.push({x:x0 * sc, y:y0 * sc, w:w * sc, h:h * sc, size:w * h, kind, px0:x0, px1:x1, py0:y0, py1:y1});
+  }
   }
   const sc = vw / PW;
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
@@ -714,19 +726,30 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
       .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));        // (the red stripe reaches two corners)
     if (Math.min.apply(null, corners) < 0.35) continue;
     // lettering: pixels clearly darker than the sign's own yellow (works in shade and when the text is blurred by distance)
-    let ys = 0, yn = 0, dn = 0;
-    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (yel[i]){ ys += mxa[i]; yn++; } }
-    const ymean = yn ? ys / yn : 200;
-    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (!yel[i] && !red0[i] && mxa[i] < ymean * 0.62) dn++; }
+    let ys = 0, yn = 0, dn = 0, yls = 0;
+    const L = i => 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (yel[i]){ ys += mxa[i]; yls += L(i); yn++; } }
+    const ymean = yn ? ys / yn : 200, ylum = yn ? yls / yn : 160;
+    // (at a distance or through glare the lettering can itself look yellowish, so judge by brightness alone)
+    for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (!red0[i] && L(i) < ylum * 0.86) dn++; }
     const df = dn / (b.w * b.h); if (df < 0.015 || df > 0.5) continue;
     // red stripe rising from left to right?
     const mid = (b.x0 + b.x1) / 2; let nl = 0, nr = 0, yl = 0, yr = 0;
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
       if (x < mid){ nl++; yl += y; } else { nr++; yr += y; } }
     const area = b.w * b.h, rf = (nl + nr) / area;
-    const end = rf < 0.3 && (redStripeFit(red0, W, b) ||
-                (nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.12));
-    if (!end && rf > 0.04) continue;          // lots of red but no stripe: not a town sign (e.g. a delivery van)
+    const end = rf < 0.3 && redStripeFit(red0, W, b);
+    // Two separate boards one above the other (direction signs): a band of background across the middle.
+    let gap = false;
+    for (let y = b.y0 + Math.round(b.h * 0.25); y <= b.y1 - Math.round(b.h * 0.25) && !gap; y++){
+      let yc = 0, dc = 0;
+      for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (yel[i] || red0[i]) yc++; else if (mxa[i] < ymean * 0.72) dc++; }
+      if (yc < b.w * 0.3 && dc < b.w * 0.5) gap = true;
+    }
+    if (gap) continue;
+    // Red but no clear stripe: not a plain town sign (a delivery van, or an exit sign not yet seen clearly enough).
+    // Never take it as entering a town.
+    if (!end && rf > 0.01) continue;
     // Direction signs often carry blue motorway or white route-number panels; a town sign is only yellow and black.
     if (!end && (frac(blue, W, b.x0, b.y0, b.x1, b.y1) > 0.008 || frac(light, W, b.x0, b.y0, b.x1, b.y1) > 0.04)) continue;
     out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, size:area});
@@ -967,7 +990,7 @@ function prepareCrop(c, variant){
   let lum = new Uint8Array(d.length / 4); const skip = new Uint8Array(d.length / 4);
   for (let i = 0, p = 0; p < d.length; i++, p += 4){
     const r = d[p], g = d[p+1], b = d[p+2], x = i % CW, y = (i / CW) | 0;
-    const isRed = r > 55 && r > g * 1.45 && r > b * 1.25;      // leftover ring (also dark/shaded red)
+    const isRed = r > 55 && r - Math.max(g, b) > Math.max(25, 0.15 * r) && g - b < 0.35 * (r - b);   // leftover ring (also pink/shaded)
     let l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
     if (c.kind === 'led') l = 255 - Math.max(r, g, b);         // bright digits -> dark on light
     lum[i] = l;
@@ -987,7 +1010,7 @@ function prepareCrop(c, variant){
 function findPlate(c){ const why = m => { if (S.debug) window.__fpWhy = m; return null; };
   const vw = video.videoWidth, vh = video.videoHeight;
   const rx = Math.max(0, c.x - c.w * 0.45), ry = c.y + c.h * 1.0;
-  const rw = Math.min(vw - rx, c.w * 1.9), rh = Math.min(vh - ry, c.h * 0.95);
+  const rw = Math.min(vw - rx, c.w * 1.9), rh = Math.min(vh - ry, c.h * 1.5);   // (plates with a symbol can be taller than the sign)
   if (rw < 20 || rh < 10) return why('region');
   const SW = 120, SH = Math.max(10, Math.round(SW * rh / rw));
   pcan.width = SW; pcan.height = SH;
@@ -996,7 +1019,7 @@ function findPlate(c){ const why = m => { if (S.debug) window.__fpWhy = m; retur
   const white = new Uint8Array(SW * SH), redm = new Uint8Array(SW * SH);
   for (let i = 0, p = 0; p < d.length; i++, p += 4){
     const r = d[p], g = d[p+1], b = d[p+2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-    if (mn > 0.75 * mx && mx > 140) white[i] = 1;
+    if (mn > 0.78 * mx && mx > 125) white[i] = 1;          // (white, also greyish; not the warm beige of a sunset sky)
     if (r > 80 && r > g * 1.55 && r > b * 1.35) redm[i] = 1;
   }
   // rows in the central band that are mostly white
@@ -1006,10 +1029,16 @@ function findPlate(c){ const why = m => { if (S.debug) window.__fpWhy = m; retur
     rowW.push(rd > (bx1 - bx0) * 0.15 ? -1 : n / (bx1 - bx0)); }
   let top = -1; for (let y = 0; y < Math.round(SH * 0.35); y++) if (rowW[y] > 0.45){ top = y; break; }
   if (top < 0) return why('notop ' + rowW.slice(0,12).map(v=>v.toFixed(2)).join(','));
-  let bot = top; while (bot + 1 < SH && rowW[bot + 1] > 0.3) bot++;
+  // follow the plate down; rows across a symbol or text are less white, so allow short dips
+  let bot = top;
+  while (bot + 1 < SH){
+    if (rowW[bot + 1] > 0.12){ bot++; continue; }
+    let more = false; for (let k = 2; k <= 4 && bot + k < SH; k++) if (rowW[bot + k] > 0.3){ more = true; break; }
+    if (!more) break; bot++;
+  }
   const ph = bot - top + 1;
   const signH = c.h * SH / rh;
-  if (ph < signH * 0.18 || ph > signH * 0.9) return why('ph ' + ph + ' signH ' + signH.toFixed(1) + ' rows ' + rowW.map(v=>v.toFixed(2)).join(','));
+  if (ph < signH * 0.18 || ph > signH * 1.45) return why('ph ' + ph + ' signH ' + signH.toFixed(1) + ' rows ' + rowW.map(v=>v.toFixed(2)).join(','));
   // horizontal extent
   const colW = x => { let n = 0; for (let y = top; y <= bot; y++) n += white[y*SW+x]; return n / ph; };
   // white columns, allowing gaps where a symbol or text fills the middle
@@ -1048,11 +1077,16 @@ function preparePlate(p){
   plctx.fillStyle = '#fff'; plctx.fillRect(0, 0, pcan.width, pcan.height);
   plctx.drawImage(video, ix, iy, iw, ih, pad, pad, W, H);
   const img = plctx.getImageData(0, 0, pcan.width, pcan.height), d = img.data;
-  const lum = new Uint8Array(d.length / 4);
-  for (let i = 0, q = 0; q < d.length; i++, q += 4) lum[i] = Math.round(0.299 * d[q] + 0.587 * d[q+1] + 0.114 * d[q+2]);
-  const thr = Math.min(otsu(lum), 150);
+  const lum = new Uint8Array(d.length / 4), PWp = pcan.width, inner = [];
+  const isPad = i => { const x = i % PWp, y = (i / PWp) | 0; return x < pad || y < pad || x >= pad + W || y >= pad + H; };
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){
+    lum[i] = Math.round(0.299 * d[q] + 0.587 * d[q+1] + 0.114 * d[q+2]);
+    if (!isPad(i)) inner.push(lum[i]);
+  }
+  // threshold from the plate itself (not the white padding), so a grey or dim plate still splits into marks and background
+  const thr = otsu(inner.length > 50 ? inner : lum);
   const bin = new Uint8Array(lum.length);
-  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const on = lum[i] <= thr; bin[i] = on ? 1 : 0;
+  for (let i = 0, q = 0; q < d.length; i++, q += 4){ const on = !isPad(i) && lum[i] <= thr; bin[i] = on ? 1 : 0;
     const v = on ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
   plctx.putImageData(img, 0, 0);
   return {bin, W: pcan.width, H: pcan.height, pad};
@@ -1089,6 +1123,10 @@ function plateSymbol(pb){
   const drops = comps.slice(1).filter(c => c.cy > big.cy && c.n < big.n * 0.35 && c.y0 >= big.y0 + big.h * 0.4 &&
                                            c.h > c.w * 1.2 && c.x0 >= big.x0 - big.w * 0.2 && c.x1 <= big.x1 + big.w * 0.2);
   if (big.w > innerW * 0.3 && big.cy < pb.pad + innerH * 0.6 && drops.length >= 2) return {type:'wet'};
+  // wet road: a car with wavy lines under it (skidding)
+  const waves = comps.filter(c => c.w > innerW * 0.3 && c.h < innerH * 0.22 && c.h < c.w * 0.4);
+  const body = comps.find(c => c.w > innerW * 0.3 && c.h > innerH * 0.18 && !waves.includes(c));
+  if (body && waves.some(c => c.y0 > body.y0 + body.h * 0.6)) return {type:'wet'};
   // night: a single crescent moon
   const fill = big.n / (big.w * big.h), ar = big.w / big.h;
   const others = comps.slice(1).filter(c => c.n > big.n * 0.15);
@@ -1193,6 +1231,16 @@ async function readOnePlate(p){
   const sym = plateSymbol(pb);
   let cond = null, text = '';
   try { const r = await plateWorker.recognize(pcan); text = r.data.text || ''; cond = parsePlateText(text); } catch(e){}
+  if (!cond && !sym){
+    // Small lettering above a symbol is often missed in the whole-plate read: read the top part on its own, enlarged.
+    try {
+      const tb = document.createElement('canvas'); tb.width = pcan.width * 2; tb.height = Math.round(pcan.height * 0.45) * 2;
+      const tc = tb.getContext('2d'); tc.imageSmoothingEnabled = false;
+      tc.drawImage(pcan, 0, 0, pcan.width, Math.round(pcan.height * 0.45), 0, 0, tb.width, tb.height);
+      const r2 = await plateWorker.recognize(tb); const t2 = r2.data.text || '';
+      const c2 = parsePlateText(t2); if (c2){ cond = c2; text = t2; }
+    } catch(e){}
+  }
   // Shapes only count for pictogram plates: if real words were read, it's a text plate we couldn't parse.
   // A vehicle silhouette on a plate only a few pixels high is a guess: wait until we're closer.
   const wordy = /[a-zäöü]{3,}/i.test(text);
@@ -1247,7 +1295,7 @@ async function readTownText(t){
 function looksLikeTownName(read, end){
   const t = read.text.toLowerCase();
   if (/\b(dhl|post|taxi)\b/.test(t) || /^\W*b\s*\d/.test(t)) return false;      // vans, B-road number plates
-  if (end) return true;                // the red stripe is strong evidence; the crossed-out name often reads badly
+  if (end) return /[a-zäöü]{3,}/.test(t);   // the crossed-out name reads badly, but some lettering must be there
   if (!/[a-zäöü]{3,}/.test(t)) return false;                                     // a place name has letters
   // A town sign has no distances and no numbers; direction signs do ("Altdorf 12 km").
   if (/\bkm\b/.test(t) || (t.match(/\d/g) || []).length >= 2) return false;
@@ -1402,18 +1450,23 @@ async function loop(){
       for (const c of cands){
         let res = await worker.recognize(prepareCrop(c, 0));
         let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
-        if (!(v && VALID[S.unit].includes(v) && res.data.confidence >= 55)){
+        let conf = res.data.confidence;
+        if (!(v && VALID[S.unit].includes(v) && conf >= 55)){
+          const first = v;
           res = await worker.recognize(prepareCrop(c, 1));
-          v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+          v = parseInt((res.data.text || '').replace(/\D/g, ''), 10); conf = res.data.confidence;
+          // The reader sometimes reports no confidence on blurry signs even when it reads them right.
+          // If two differently cropped reads agree on a real limit, take it.
+          if (v && v === first && VALID[S.unit].includes(v) && conf < 55) conf = 60;
         }
-        if (v && VALID[S.unit].includes(v) && res.data.confidence >= 55){
+        if (v && VALID[S.unit].includes(v) && conf >= 55){
           let cond = null;
           if (c.kind === 'print'){
             const pr = await readPlate(c);
             cond = pr.cond;
             pr.plates.forEach(pl => boxes.push(Object.assign({color:'#4ea1ff'}, pl)));
           }
-          accept(v, res.data.confidence, cond, c.kind === 'led');
+          accept(v, conf, cond, c.kind === 'led');
           boxes.push(Object.assign({color:'#3ddc84'}, c));
           found.push({v, kind:c.kind, cond});
         } else boxes.push(Object.assign({color:'#ffd166'}, c));
