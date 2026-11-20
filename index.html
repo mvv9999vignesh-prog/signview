@@ -681,13 +681,33 @@ function findCandidates(){
     next++;
     const w = x1 - x0 + 1, h = y1 - y0 + 1;
     if (w < 12 || h < 12 || w > PW * 0.6 || h > PH * 0.6) continue;
-    const ar = w / h; if (ar < 0.6 || ar > 1.55) continue;          // allow signs seen at an angle
-    const ringMx = ringN ? ringSum / ringN : 120;
-    const fill = cnt / (w * h); if (fill < 0.12 || fill > 0.7) continue;
+    const id = next - 1, ringMx = ringN ? ringSum / ringN : 120;
+    const ar = w / h;
+    if (ar >= 0.36 && ar < 0.62 && h >= 26){
+      // Two round signs mounted one above the other (a limit over a no-overtaking sign) join into one tall blob:
+      // split it at its narrowest row and look at each disc on its own.
+      const span = yy => { let l = -1, r = -1; for (let x = x0; x <= x1; x++) if (lab[yy * PW + x] === id){ if (l < 0) l = x; r = x; } return l < 0 ? 0 : r - l + 1; };
+      let ys = -1, best = 1e9;
+      for (let y = y0 + Math.round(h * 0.35); y <= y0 + Math.round(h * 0.65); y++){ const sw = span(y); if (sw < best){ best = sw; ys = y; } }
+      if (ys > 0 && best < w * 0.75){
+        ringCand(lab, id, x0, y0, x1, ys, ringMx);
+        ringCand(lab, id, x0, ys, x1, y1, ringMx);
+      }
+      continue;
+    }
+    ringCand(lab, id, x0, y0, x1, y1, ringMx);
+  }
+  }
+  function ringCand(lab, id, x0, y0, x1, y1, ringMx){
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (w < 12 || h < 12) return;
+    const ar = w / h; if (ar < 0.6 || ar > 1.55) return;          // allow signs seen at an angle
+    let cnt = 0; for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (lab[y * PW + x] === id) cnt++;
+    const fill = cnt / (w * h); if (fill < 0.12 || fill > 0.7) return;
     // a circle is as wide near its top as near its bottom; a warning triangle is not
-    const span = yy => { let l = -1, r = -1; for (let x = x0; x <= x1; x++) if (lab[yy * PW + x] === next - 1){ if (l < 0) l = x; r = x; } return l < 0 ? 0 : r - l + 1; };
+    const span = yy => { let l = -1, r = -1; for (let x = x0; x <= x1; x++) if (lab[yy * PW + x] === id){ if (l < 0) l = x; r = x; } return l < 0 ? 0 : r - l + 1; };
     const topW = span(y0 + Math.round(h * 0.12)), botW = span(y1 - Math.round(h * 0.12));
-    if (!topW || !botW || topW / botW < 0.4 || topW / botW > 2.5) continue;
+    if (!topW || !botW || topW / botW < 0.4 || topW / botW > 2.5) return;
     const cx0 = x0 + Math.round(w * 0.28), cx1 = x1 - Math.round(w * 0.28);
     const cy0 = y0 + Math.round(h * 0.28), cy1 = y1 - Math.round(h * 0.28);
     let tot = 0, red = 0, lt = 0, dk = 0, br = 0;
@@ -696,18 +716,36 @@ function findCandidates(){
       // "white" is judged against the ring's own brightness, so signs in shade still count
       if (red0[i]) red++; else {
         if (mna[i] > 0.55 * mxa[i] && mxa[i] > 55 && mxa[i] >= ringMx * 0.85) lt++;
-        if (dark[i]) dk++; if (bright[i]) br++; }
+        if (dark[i]) dk++;
+        if (mxa[i] > Math.max(110, ringMx * 0.9)) br++; }          // lit digits: white, amber, yellow or green
     }
-    if (!tot || red / tot > 0.15) continue;
-    let kind = null;
-    if (lt / tot >= 0.3) kind = 'print';
-    else if (dk / tot >= 0.4 && br / tot >= 0.04 && br / tot <= 0.55) kind = 'led';
-    if (!kind) continue;
+    if (!tot) return;
+    const rf = red / tot, df = dk / tot, lf = lt / tot, bf = br / tot;
+    // The face just inside the ring, above and below the digits: white on a printed sign, black on an electronic one.
+    const fcx = (x0 + x1) / 2, fcy = (y0 + y1) / 2, rx = w / 2, ry = h / 2;
+    let fn = 0, fDark = 0, fRed = 0, fLight = 0;
+    for (const rr of [0.55, 0.62]) for (let a = 60; a <= 120; a += 6) for (const sg of [1, -1]){
+      const x = Math.round(fcx + rr * rx * Math.cos(a * Math.PI / 180)), y = Math.round(fcy - sg * rr * ry * Math.sin(a * Math.PI / 180));
+      const i = y * PW + x; fn++;
+      if (red0[i]) fRed++;
+      else if (mxa[i] < Math.max(70, ringMx * 0.45)) fDark++;
+      else if (mna[i] > 0.55 * mxa[i] && mxa[i] >= ringMx * 0.8) fLight++;
+    }
+    const fd = fDark / fn, fr = fRed / fn, fl = fLight / fn;
+    let kind = null, alt = false;
+    // (samples that land on the ring's red, blurred inwards, say nothing either way)
+    if (fd >= 0.1 && fl <= fd / 2 && bf >= 0.03 && rf <= 0.6) { kind = 'led'; alt = fl > 0; }      // lit digits on a black face
+    else if (fl >= 0.15 && fd <= fl / 2 && rf <= 0.2) kind = 'print';
+    else if (fr >= 0.7 && lf < 0.15 && bf >= 0.1 && rf <= 0.6) kind = 'led';                         // over-exposed LED sign: red glow all round bright digits                            // dark digits on a light face
+    else if (rf + df > lf && rf + df >= 0.3 && rf <= 0.6 && bf >= 0.04 && bf <= 0.6) { kind = 'led'; alt = true; }
+    else if (rf <= 0.2 && lf >= 0.3) { kind = 'print'; alt = true; }
+    else if (rf <= 0.15 && lf >= 0.15 && df >= 0.3) { kind = 'print'; alt = true; }   // dim sign at dusk: could be either
+    if (S.debug && window.__D) window.__D.push({s:'ring', x0, y0, w, h, fd:+fd.toFixed(2), fr:+fr.toFixed(2), fl:+fl.toFixed(2), rf:+rf.toFixed(2), df:+df.toFixed(2), lf:+lf.toFixed(2), bf:+bf.toFixed(2), ringMx:Math.round(ringMx), kind});
+    if (!kind) return;
     const sc = vw / PW;
     const dup = cands.some(c => { const ix = Math.max(0, Math.min(c.px1, x1) - Math.max(c.px0, x0)), iy = Math.max(0, Math.min(c.py1, y1) - Math.max(c.py0, y0));
                                   return ix * iy > 0.5 * Math.min(w * h, (c.px1 - c.px0) * (c.py1 - c.py0)); });
-    if (!dup) cands.push({x:x0 * sc, y:y0 * sc, w:w * sc, h:h * sc, size:w * h, kind, px0:x0, px1:x1, py0:y0, py1:y1});
-  }
+    if (!dup) cands.push({x:x0 * sc, y:y0 * sc, w:w * sc, h:h * sc, size:w * h, kind, alt, px0:x0, px1:x1, py0:y0, py1:y1});
   }
   const sc = vw / PW;
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
@@ -943,7 +981,26 @@ function confirmEndSign(c){
     }
     fa = Math.max(fa, flips(across)); fl = Math.min(fl, flips(along));
   }
-  return fa >= 6 && fl <= 4 && fa - fl >= 4;
+  if (!(fa >= 6 && fl <= 4 && fa - fl >= 4)) return false;
+  // The stripes are straight and parallel: a line drawn along them is almost all dark (on a stripe) or almost all
+  // white (between stripes). Blurred branches or shadows give patchy, half-dark lines.
+  let lines = 0, pure = 0, full = 0;
+  for (let o = -0.36; o <= 0.361; o += 0.036){
+    let n = 0, k = 0;
+    for (let j = 0; j < 40; j++){
+      const t = -0.85 + 1.7 * j / 39;                       // position along the stripe, in disc radii
+      const u = (t - o) / Math.SQRT2, v = (-t - o) / Math.SQRT2; // rising to the right
+      if (u * u + v * v >= 0.6) continue;
+      const x = Math.round((u + 1) * S / 2 - 0.5), y = Math.round((v + 1) * S / 2 - 0.5);
+      n++; if (isS(y * S + x)) k++;
+    }
+    if (n < 10) continue;
+    const cov = k / n; lines++;
+    if (cov < 0.2 || cov > 0.65) pure++;
+    if (cov > 0.65) full++;
+  }
+  if (window.__D) window.__D.push({s:'endlines', lines, pure, full});
+  return lines > 0 && pure / lines >= 0.4 && full >= 3;
 }
 function dilate(m, W, H){
   const o = new Uint8Array(m.length);
@@ -1024,9 +1081,32 @@ function boxBlur(lum, W, H){
   return out;
 }
 
+async function readNumber(c){
+  let res = await worker.recognize(prepareCrop(c, 0));
+  let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
+  let conf = res.data.confidence;
+  if (!(v && VALID[S.unit].includes(v) && conf >= 55)){
+    const first = v;
+    res = await worker.recognize(prepareCrop(c, 1));
+    v = parseInt((res.data.text || '').replace(/\D/g, ''), 10); conf = res.data.confidence;
+    // The reader sometimes reports no confidence on blurry signs even when it reads them right.
+    // If two differently cropped reads agree on a real limit, take it.
+    if (v && v === first && VALID[S.unit].includes(v) && conf < 55) conf = 60;
+    if (!(v && VALID[S.unit].includes(v) && conf >= 55) && (first >= 0 || v >= 0)){   // (only when some digit was seen)
+      const second = v;
+      res = await worker.recognize(prepareCrop(c, 2));
+      v = parseInt((res.data.text || '').replace(/\D/g, ''), 10); conf = res.data.confidence;
+      if (v && (v === first || v === second) && VALID[S.unit].includes(v) && conf < 55) conf = 60;
+    }
+  }
+  // A single digit is usually a misread part of a blurred two-digit sign (5 km/h signs are rare): only take a very clear one.
+  if (v < 10 && conf < 88) { v = NaN; conf = 0; }
+  if (S.debug && window.__D) window.__D.push({s:'ocr', kind:c.kind, w:Math.round(c.w), text:res.data.text, conf:Math.round(conf)});
+  return {v, conf};
+}
 function prepareCrop(c, variant){
   // variant 1 is a slightly larger box, tried when the first read fails (angled or off-centre numbers)
-  const bx = variant ? [0.11, 0.17, 0.78, 0.66] : [0.16, 0.22, 0.68, 0.56];
+  const bx = variant === 1 ? [0.11, 0.17, 0.78, 0.66] : [0.16, 0.22, 0.68, 0.56];
   const ix = c.x + c.w * bx[0], iy = c.y + c.h * bx[1], iw = c.w * bx[2], ih = c.h * bx[3];
   const H = 72, W = Math.max(40, Math.round(H * iw / ih)), pad = 16;
   crop.width = W + pad * 2; crop.height = H + pad * 2;
@@ -1039,16 +1119,22 @@ function prepareCrop(c, variant){
     const r = d[p], g = d[p+1], b = d[p+2], x = i % CW, y = (i / CW) | 0;
     const isRed = r > 55 && r - Math.max(g, b) > Math.max(25, 0.15 * r) && g - b < 0.35 * (r - b);   // leftover ring (also pink/shaded)
     let l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-    if (c.kind === 'led') l = 255 - Math.max(r, g, b);         // bright digits -> dark on light
+    if (c.kind === 'led') l = 255 - g;         // lit digits (white, amber, green) are bright in green; the red ring and its glow are not
     lum[i] = l;
     // padding and ring remnants are background: left out of the threshold so a dim or shaded sign still splits cleanly
     skip[i] = (isRed || x < pad || y < pad || x >= pad + W || y >= pad + H) ? 1 : 0;
   }
-  if (c.kind === 'led'){ lum = boxBlur(lum, CW, CH); lum = boxBlur(lum, CW, CH); }
+  if (c.kind === 'led'){ lum = boxBlur(lum, CW, CH); if (variant === 1) lum = boxBlur(lum, CW, CH); }   // join the LED dots into strokes
   const inner = []; for (let i = 0; i < lum.length; i++) if (!skip[i]) inner.push(lum[i]);
-  const thr = otsu(inner.length > 50 ? inner : lum);
+  let thr = otsu(inner.length > 50 ? inner : lum);
+  if (variant === 2){
+    // blurred sign: keep only the dark core of each stroke so digits that ran together come apart again
+    let sm = 0, n = 0; for (const v of inner) if (v <= thr){ sm += v; n++; }
+    if (n) thr = Math.round(sm / n + (thr - sm / n) * 0.35);
+  }
   for (let i = 0, p = 0; p < d.length; i++, p += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[p] = d[p+1] = d[p+2] = v; d[p+3] = 255; }
   cctx.putImageData(img, 0, 0);
+  if (S.debug && window.__D && window.__D.length < 5000) window.__D.push({s:'crop', kind:c.kind, variant, img:crop.toDataURL()});
   return crop;
 }
 
@@ -1495,16 +1581,12 @@ async function loop(){
         if (ok) break;
       }
       for (const c of cands){
-        let res = await worker.recognize(prepareCrop(c, 0));
-        let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
-        let conf = res.data.confidence;
-        if (!(v && VALID[S.unit].includes(v) && conf >= 55)){
-          const first = v;
-          res = await worker.recognize(prepareCrop(c, 1));
-          v = parseInt((res.data.text || '').replace(/\D/g, ''), 10); conf = res.data.confidence;
-          // The reader sometimes reports no confidence on blurry signs even when it reads them right.
-          // If two differently cropped reads agree on a real limit, take it.
-          if (v && v === first && VALID[S.unit].includes(v) && conf < 55) conf = 60;
+        let {v, conf} = await readNumber(c);
+        if (!(v && VALID[S.unit].includes(v) && conf >= 55) && c.alt){
+          // a dim sign at dusk can look like either kind: read it the other way round too
+          const other = Object.assign({}, c, {kind: c.kind === 'led' ? 'print' : 'led'});
+          const r2 = await readNumber(other);
+          if (r2.v && VALID[S.unit].includes(r2.v) && r2.conf >= 55){ v = r2.v; conf = r2.conf; c.kind = other.kind; }
         }
         if (v && VALID[S.unit].includes(v) && conf >= 55){
           let cond = null;
