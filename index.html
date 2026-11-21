@@ -27,7 +27,7 @@
   :focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
 
   /* the road ahead, live, behind everything */
-  #camWrap{position:fixed;inset:0;background:var(--asphalt)}
+  #camWrap{position:fixed;inset:0;background:var(--asphalt);cursor:pointer}   /* (cursor: iPhone Safari only sends taps to clickable things) */
   #cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(.85) brightness(.8)}
   #overlay{position:absolute;inset:0;width:100%;height:100%}
   #shade{position:fixed;inset:0;pointer-events:none;
@@ -48,9 +48,11 @@
   .chip.ok i{background:#7fd38b} .chip.bad i{background:var(--red)}
   .chip.town{background:var(--yellow);color:#16130a}
   .chip.autobahn,.chip.kfs,.chip.calm{background:var(--blue);color:#fff}
-  #settingsBtn{width:44px;height:44px;border:0;border-radius:22px;background:rgba(35,40,45,.78);color:var(--line);
+  #topBtns{display:flex;gap:10px;flex:none}
+  #snapBtn.flash{background:var(--white);color:var(--asphalt)}
+  #settingsBtn,#snapBtn{width:44px;height:44px;border:0;border-radius:22px;background:rgba(35,40,45,.78);color:var(--line);
     backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:grid;place-items:center;cursor:pointer}
-  #settingsBtn svg{width:22px;height:22px}
+  #settingsBtn svg,#snapBtn svg{width:22px;height:22px}
 
   /* the sign: the one big thing */
   #signArea{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;gap:10px}
@@ -170,9 +172,14 @@
 <main id="app">
   <div id="top">
     <div id="chips" aria-live="polite"></div>
+    <div id="topBtns">
+    <button id="snapBtn" aria-label="Save a photo of what the camera sees">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    </button>
     <button id="settingsBtn" aria-label="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
     </button>
+    </div>
   </div>
 
   <section id="signArea" aria-live="polite">
@@ -990,7 +997,11 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
     // Never take it as entering a town.
     if (!end && rf > 0.01) continue;
     // Direction signs often carry blue motorway or white route-number panels; a town sign is only yellow and black.
-    if (!end && (frac(blue, W, b.x0, b.y0, b.x1, b.y1) > 0.008 || frac(light, W, b.x0, b.y0, b.x1, b.y1) > 0.04)) continue;
+    // (white is measured inside the sign: a real town sign has a white rim round its black border, and poles beside it)
+    const ix = Math.round(b.w * 0.15), iy = Math.round(b.h * 0.18);
+    if (S.debug && window.__D) window.__D.push({s:'townchk', w:b.w, h:b.h, yf:+yf.toFixed(2), df:+df.toFixed(2), end, rf:+rf.toFixed(3),
+      blue:+frac(blue, W, b.x0, b.y0, b.x1, b.y1).toFixed(3), lightIn:+frac(light, W, b.x0 + ix, b.y0 + iy, b.x1 - ix, b.y1 - iy).toFixed(3)});
+    if (!end && (frac(blue, W, b.x0, b.y0, b.x1, b.y1) > 0.008 || frac(light, W, b.x0 + ix, b.y0 + iy, b.x1 - ix, b.y1 - iy) > 0.04)) continue;
     out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, size:area});
   }
   return out.sort((a, b) => b.size - a.size).slice(0, 1);
@@ -1606,11 +1617,14 @@ async function readPlate(c){
 }
 
 /* ---------- town sign text ---------- */
-async function readTownText(t){
-  const H = 64, W = Math.max(60, Math.round(H * t.w / t.h)), pad = 10;
+async function readTownText(t, part){
+  // part 'top': just the upper half, where the place name is, enlarged (for small, distant signs)
+  const H = part ? 72 : 84, src = part ? [t.x + t.w * 0.1, t.y + t.h * 0.12, t.w * 0.8, t.h * 0.42]
+                                       : [t.x + t.w * 0.05, t.y + t.h * 0.08, t.w * 0.9, t.h * 0.84];
+  const W = Math.max(60, Math.round(H * src[2] / src[3])), pad = 10;
   pcan.width = W + pad * 2; pcan.height = H + pad * 2;
   plctx.fillStyle = '#fff'; plctx.fillRect(0, 0, pcan.width, pcan.height);
-  plctx.drawImage(video, t.x + t.w * 0.04, t.y + t.h * 0.06, t.w * 0.92, t.h * 0.88, pad, pad, W, H);
+  plctx.drawImage(video, src[0], src[1], src[2], src[3], pad, pad, W, H);
   const img = plctx.getImageData(0, 0, pcan.width, pcan.height), d = img.data, lum = new Uint8Array(d.length / 4);
   const PWc = pcan.width, skip = new Uint8Array(lum.length), inner = [];
   for (let i = 0, q = 0; q < d.length; i++, q += 4){
@@ -1620,7 +1634,11 @@ async function readTownText(t){
     skip[i] = ((r > 70 && r > g * 1.5 && r > b * 1.3) || x < pad || y < pad || x >= pad + W || y >= pad + H) ? 1 : 0;
     if (!skip[i]) inner.push(lum[i]);
   }
-  const thr = otsu(inner.length > 50 ? inner : lum);
+  let thr = otsu(inner.length > 50 ? inner : lum);
+  if (part){   // blurred small lettering runs together: keep only the dark core of each letter
+    let sm = 0, n = 0; for (const v of inner) if (v <= thr){ sm += v; n++; }
+    if (n) thr = Math.round(sm / n + (thr - sm / n) * 0.45);
+  }
   for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
   plctx.putImageData(img, 0, 0);
   // Layout: rows of lettering, their heights and how centred they are.
@@ -1636,24 +1654,35 @@ async function readTownText(t){
     for (let y = a; y <= b; y++) for (let x = pad; x < pad + W; x++) if (d[(y * PWc + x) * 4] === 0){ if (x < l) l = x; if (x > r) r = x; }
     return {h: b - a + 1, left: (l - pad) / W, right: (pad + W - 1 - r) / W};
   });
+  if (S.debug && window.__D && window.__D.length < 5000) window.__D.push({s:'towncrop', part:part || 'all', img:pcan.toDataURL()});
   let text = '';
   try { text = ((await plateWorker.recognize(pcan)).data.text || '').trim(); } catch(e){}
+  if (!part && !/[a-zäöü]{3,}/i.test(text)){
+    const top = await readTownText(t, 'top');
+    if (top.text) text = top.text + (text ? '\n' + text : '');
+  }
   return {text, bands, H};
 }
 function looksLikeTownName(read, end){
-  const t = read.text.toLowerCase();
+  const t = read.text.toLowerCase(), digits = (t.match(/\d/g) || []).length;
   if (/\b(dhl|post|taxi)\b/.test(t) || /^\W*b\s*\d/.test(t)) return false;      // vans, B-road number plates
   if (end) return /[a-zäöü]{3,}/.test(t);   // the crossed-out name reads badly, but some lettering must be there
   if (!/[a-zäöü]{3,}/.test(t)) return false;                                     // a place name has letters
-  // A town sign has no distances and no numbers; direction signs do ("Altdorf 12 km").
-  if (/\bkm\b/.test(t) || (t.match(/\d/g) || []).length >= 2) return false;
-  // Layout: one large, centred name, maybe a smaller line (district) under it. Direction boards have
+  // A town sign has no distances; direction signs do ("Altdorf 12 km").
+  if (/\bkm\b/.test(t) || digits >= 3) return false;
+  // A clear place name: one word of five or more letters starting with a capital ("Wiesloch", "St. Leon-Rot").
+  const name = /(^|\s)[A-ZÄÖÜ][a-zäöüß]{4,}/.test(read.text) || /(^|\s)St[.,]?\s*[A-ZÄÖÜ][a-zäöüß]{2,}/.test(read.text);
+  // (specks of a few pixels are not lines of text)
+  const b = read.bands.filter(x => x.h >= read.H * 0.1).sort((p, q) => q.h - p.h);
+  // When the lines can't be measured (a small, blurred sign whose border runs them all together), some clear
+  // lettering is enough: direction boards were already turned away by their shape, arrows, gaps and coloured panels.
+  if (!b.length || b[0].h > read.H * 0.5) return name || /[a-zäöü]{4,}/.test(t);
+  if (digits >= 2) return false;
+  // Layout: one large, centred name, maybe smaller lines (district, county) under it. Direction boards have
   // several rows of the same size, usually left-aligned next to arrows.
-  const b = read.bands.slice().sort((p, q) => q.h - p.h);
-  if (!b.length || b.length > 4) return false;
+  if (b.length > 5) return false;
   if (Math.abs(b[0].left - b[0].right) > 0.2) return false;
-  if (b[0].h > read.H * 0.5) return false;                   // one "row" this tall is really two rows run together
-  if (b.length >= 2 && b[0].h < b[1].h * 1.25) return false;
+  if (b.length >= 2 && b[0].h < b[1].h * 1.25) return name && b[0].h >= b[1].h;
   return true;
 }
 
@@ -1812,6 +1841,7 @@ async function loop(){
       for (const t of found0.towns){
         const read = await readTownText(t);
         const ok = looksLikeTownName(read, t.end);
+        if (S.debug && window.__D) window.__D.push({s:'townread', text:read.text, bands:read.bands.map(b => [b.h, +b.left.toFixed(2), +b.right.toFixed(2)]), H:read.H, ok});
         if (ok){ areaEvent(t.end ? 'out' : 'in'); found.push({town: t.end ? 'out' : 'in', text: read.text}); }
         boxes.push(Object.assign({color: ok ? '#ff9f1c' : '#ffd166'}, t));
       }
@@ -1841,6 +1871,7 @@ async function loop(){
         if (ok) break;
       }
       for (const o of found0.others){
+        if (S.debug && window.__D) window.__D.push({s:'extra', kind:o.kind, x:Math.round(o.x), y:Math.round(o.y), w:Math.round(o.w), h:Math.round(o.h)});
         extraEvent(o.kind); boxes.push(Object.assign({color:'#ff9f1c'}, o));
       }
       for (const z of found0.zones){
@@ -1889,12 +1920,12 @@ async function loop(){
     } catch(e){ console.warn('signview', e && e.message); }
     busy = false;
   }
-  setTimeout(loop, 150);
+  setTimeout(loop, 80);          // (short pause: more frames per second means more chances to read each sign)
 }
 
 /* ================= photo for checking (detection boxes on: tap the camera view) ================= */
-$('camWrap').addEventListener('click', async () => {
-  if (!S.debug || !video.videoWidth) return;
+async function savePhoto(){
+  if (!video.videoWidth) return;
   const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
   c.getContext('2d').drawImage(video, 0, 0);
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
@@ -1908,7 +1939,10 @@ $('camWrap').addEventListener('click', async () => {
     label.textContent = 'photo saved';
   } catch(e){ label.textContent = 'photo cancelled'; }
   setTimeout(() => { label.textContent = old; }, 2000);
-});
+}
+// the camera button saves the frame (to send for checking a missed sign); with detection boxes on, tapping the picture does too
+$('snapBtn').addEventListener('click', () => { $('snapBtn').classList.add('flash'); setTimeout(() => $('snapBtn').classList.remove('flash'), 200); savePhoto(); });
+$('camWrap').addEventListener('click', () => { if (S.debug) savePhoto(); });
 
 /* ================= start / settings UI ================= */
 async function start(){
