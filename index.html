@@ -54,23 +54,41 @@
 
   /* the sign: the one big thing */
   #signArea{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;gap:10px}
-  #signWrap{position:relative;width:min(62vw,40vh,320px);aspect-ratio:1}
+  #signArea{--sz:min(54vw,37vh,300px)}
+  #signRow{display:flex;align-items:center;justify-content:center;gap:16px;max-width:100%}
+  #signCol{display:flex;flex-direction:column;align-items:center}
+  #signWrap{position:relative;width:var(--sz);aspect-ratio:1}
+  /* supplementary plate, drawn like the real one under the sign */
+  #plate{display:none;margin-top:calc(var(--sz) * .05);min-width:calc(var(--sz) * .62);max-width:calc(var(--sz) * 1.05);
+    padding:calc(var(--sz) * .025) calc(var(--sz) * .05);background:var(--white);color:#111;border:3px solid #111;border-radius:5px;
+    font-weight:700;font-size:calc(var(--sz) * .095);line-height:1.15;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  #plate.on{display:block}
+  #plate.idle{opacity:.55}
+  #plate .ic{font-size:1.15em;margin-right:.25em}
+  #plate small{display:block;font-size:.6em;font-weight:600;color:#4a4f55}
+  /* other signs seen: warning, give way, no overtaking */
+  #extras{display:flex;flex-direction:column;gap:12px;align-items:center}
+  #extras:empty{display:none}
+  .xs{display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--line);font-size:12px;font-weight:600;text-align:center;
+    text-shadow:0 1px 6px rgba(0,0,0,.7);width:72px}
+  .xs svg{width:58px;height:58px;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5))}
+  .xs.fresh svg{animation:arrive .45s cubic-bezier(.2,.9,.3,1.2)}
   #sign{width:100%;height:100%;border-radius:50%;background:var(--white);
-    border:calc(min(62vw,40vh,320px) * .1) solid var(--red);display:flex;align-items:center;justify-content:center;
-    color:#111;font-weight:700;font-size:calc(min(62vw,40vh,320px) * .42);letter-spacing:-.02em;line-height:1;
-    box-shadow:0 0 0 calc(min(62vw,40vh,320px) * .018) var(--white),0 18px 50px rgba(0,0,0,.55)}
-  #sign.long{font-size:calc(min(62vw,40vh,320px) * .33)}
+    border:calc(var(--sz) * .1) solid var(--red);display:flex;align-items:center;justify-content:center;
+    color:#111;font-weight:700;font-size:calc(var(--sz) * .42);letter-spacing:-.02em;line-height:1;
+    box-shadow:0 0 0 calc(var(--sz) * .018) var(--white),0 18px 50px rgba(0,0,0,.55)}
+  #sign.long{font-size:calc(var(--sz) * .33)}
   #sign.none{background:rgba(35,40,45,.6);border-color:var(--kerb);color:var(--muted);box-shadow:none;
-    font-size:calc(min(62vw,40vh,320px) * .14);font-weight:600;letter-spacing:0}
-  #sign.led{background:#0d0f10;color:#fff7d6;box-shadow:0 0 0 calc(min(62vw,40vh,320px) * .05) #0d0f10,0 18px 50px rgba(0,0,0,.55)}
-  #sign.nolimit{border:calc(min(62vw,40vh,320px) * .02) solid #2b2b2b;color:transparent;
+    font-size:calc(var(--sz) * .14);font-weight:600;letter-spacing:0}
+  #sign.led{background:#0d0f10;color:#fff7d6;box-shadow:0 0 0 calc(var(--sz) * .05) #0d0f10,0 18px 50px rgba(0,0,0,.55)}
+  #sign.nolimit{border:calc(var(--sz) * .02) solid #2b2b2b;color:transparent;
     background:repeating-linear-gradient(-45deg,var(--white) 0 8%,#2b2b2b 8% 10.5%)}
-  #sign.walk{border-radius:10%;border-color:var(--white);background:var(--blue);color:#fff;font-size:calc(min(62vw,40vh,320px) * .4)}
+  #sign.walk{border-radius:10%;border-color:var(--white);background:var(--blue);color:#fff;font-size:calc(var(--sz) * .4)}
   #sign.fresh{animation:arrive .45s cubic-bezier(.2,.9,.3,1.2)}
   @keyframes arrive{from{transform:scale(.82);opacity:.4}to{transform:scale(1);opacity:1}}
   #badge{position:absolute;right:-2%;bottom:2%;min-width:30%;height:30%;padding:0 6%;border-radius:999px;display:none;
     align-items:center;justify-content:center;background:var(--white);color:#111;border:3px solid var(--asphalt);
-    font-size:calc(min(62vw,40vh,320px) * .14);font-weight:700}
+    font-size:calc(var(--sz) * .14);font-weight:700}
   #limitSrc{font-size:19px;font-weight:600;color:var(--line);text-align:center;text-shadow:0 1px 8px rgba(0,0,0,.6)}
   #condNote{font-size:16px;color:var(--muted);text-align:center;min-height:20px;max-width:34ch;text-shadow:0 1px 8px rgba(0,0,0,.6)}
 
@@ -105,7 +123,7 @@
     #top{grid-column:1 / -1}
     #signArea{grid-row:2 / 4}
     #speedBox{align-self:center}
-    #signWrap{width:min(40vw,62vh,320px)}
+    #signArea{--sz:min(32vw,46vh,280px)}
     #shade{background:linear-gradient(to right,rgba(21,24,27,.55) 0,rgba(21,24,27,.35) 40%,rgba(21,24,27,.88) 70%)}
   }
   @media (prefers-reduced-motion:reduce){ #sign.fresh, body.over #shade{animation:none} }
@@ -158,9 +176,15 @@
   </div>
 
   <section id="signArea" aria-live="polite">
-    <div id="signWrap">
-      <div id="sign" class="none"><span id="limitVal">No sign yet</span></div>
-      <div id="badge"></div>
+    <div id="signRow">
+      <div id="signCol">
+        <div id="signWrap">
+          <div id="sign" class="none"><span id="limitVal">No sign yet</span></div>
+          <div id="badge"></div>
+        </div>
+        <div id="plate"></div>
+      </div>
+      <div id="extras"></div>
     </div>
     <div id="limitSrc">Tap Start to begin</div>
     <div id="condNote"></div>
@@ -249,7 +273,7 @@ const VALID = {
 const st = {
   pos:null, speedMs:null, heading:null, lastFix:null,
   rule:{base:null, prevBase:null, conds:[]},
-  mapLimit:null, mapLimitChangedAt:0,
+  mapLimit:null, mapLimitChangedAt:0, road:null, extras:[],
   reads:[], seen:{}, odo:0, history:[], lastLim:null, gpsErr:null, area:{kind:null, time:0}, lastEnd:0,
   wx:null,              // {wet:boolean, time}
   running:false
@@ -326,7 +350,7 @@ function condActive(c){
     case 'wet':   return isWet();
     case 'night': return isNight();
     case 'vehicle': return vehicleMatches(c.who) && (!c.extra || condActive(c.extra));
-    default:      return false;     // unread plate: don't guess
+    default:      return true;      // a plate we can't read: the limit is there, so assume it applies
   }
 }
 const DAYN = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -341,7 +365,7 @@ function condText(c){
     case 'night': return 'at night';
     case 'vehicle': return (c.label ? 'over ' + c.label : {heavy:'lorries/buses', car:'cars', trailer:'with trailer'}[c.who]) +
                            (c.extra ? ', ' + condText(c.extra) : '');
-    default: return 'with a plate I can\u2019t read (ignored)';
+    default: return 'plate not readable, applied to be safe';
   }
 }
 const CONDICON = {time:'⏱', days:'📅', wet:'🌧', night:'🌙', ice:'❄', unknown:'?'};
@@ -403,13 +427,13 @@ function evalRule(r, depth){
   const active = r.conds.filter(c => condActive(c.cond));
   if (active.length){
     const best = active.reduce((a, b) => b.value < a.value ? b : a);
-    return {value:best.value, src:'sign', cond:best.cond, led:best.led};
+    return {value:best.value, src:'sign', cond:best.cond, led:best.led, strong:!!best.strong};
   }
   const expired = r.base && r.base.untilOdo != null && st.odo > r.base.untilOdo;   // "auf 2 km" has been driven
   if (r.base && !expired){
     const src = r.base.src || 'sign';
     const v = src === 'sign' ? r.base.value : (defaultLimit() != null ? defaultLimit() : r.base.value);
-    return {value:v, src, why:r.base.why, cond:null, led:r.base.led, untilOdo:r.base.untilOdo};
+    return {value:v, src, why:r.base.why, cond:null, led:r.base.led, untilOdo:r.base.untilOdo, strong: src === 'sign' && !!r.base.strong};
   }
   return evalRule(r.fallback, depth + 1);
 }
@@ -423,11 +447,30 @@ function cameraInfo(){
   e.time = latest || Date.now();
   return e;
 }
+/* Map data (OpenStreetMap) fills the gaps the camera leaves:
+   - before any sign has been read;
+   - when you turn onto a different road and no sign has been read since (the last sign was for the old road);
+   - when the last reading was unclear and the map disagrees with it (after 150 m, so a fresh sign isn't overruled
+     by map data that changes a few metres later than the real sign);
+   - when no sign has been seen for 5 km and the map disagrees.
+   A clear reading on the same road is kept. Limits that come from town/end signs count as unclear here. */
+let camSince = null;
 function currentLimit(){
-  // A sign that has been read stays on screen until another sign replaces it.
-  // Map data is only used before any sign has been read (or while only a conditional limit is known that isn't in force).
-  const cam = cameraInfo(), m = S.osm ? st.mapLimit : null;
-  if (cam && cam.value != null) return cam;
+  const cam = cameraInfo(), m = S.osm && st.mapLimit && Date.now() - st.mapLimit.time < 120000 ? st.mapLimit : null;
+  if (cam && cam.value != null){
+    if (!camSince || camSince.value !== cam.value || camSince.src !== cam.src || camSince.time !== cam.time)
+      camSince = {value: cam.value, src: cam.src, time: cam.time,
+                  odo: camSince && camSince.value === cam.value && camSince.src === cam.src ? camSince.odo : st.odo,
+                  road: st.road ? st.road.key : null};
+    if (camSince.road == null && st.road) camSince.road = st.road.key;
+    if (m && m.value !== cam.value){
+      const driven = st.odo - camSince.odo;
+      const newRoad = st.road && camSince.road && st.road.key !== camSince.road && driven > 40;
+      const why = newRoad ? 'newroad' : !cam.strong && driven > 150 ? 'weak' : driven > 5000 ? 'stale' : null;
+      if (why) return {value:m.value, src:'map', time:m.time, cond:null, why, camValue:cam.value};
+    }
+    return cam;
+  }
   if (m) return {value:m.value, src:'map', time:m.time, cond:null};
   return null;
 }
@@ -436,8 +479,16 @@ function ago(t){
   return s < 60 ? s + 's ago' : Math.round(s / 60) + ' min ago';
 }
 const AREA_CHIP = {town:['town','In town'], calm:['calm','Traffic-calmed'], rural:['','Outside town'], kfs:['kfs','Expressway'], autobahn:['autobahn','Autobahn']};
-let lastShownKey = '';
-function signKey(lim){ return lim ? lim.value + '|' + lim.src + '|' + (lim.led ? 1 : 0) + '|' + st.area.kind : ''; }
+let lastShownKey = '', renderedExtras = '';
+const EXTRA_NAME = {warn:'Hazard ahead', yield:'Give way', nopass:'No overtaking'};
+const EXTRA_SVG = {
+  warn: '<svg viewBox="0 0 60 54"><path d="M30 3 57 50H3z" fill="#f7f7f4" stroke="#c8102e" stroke-width="6" stroke-linejoin="round"/><rect x="27" y="18" width="6" height="17" rx="2" fill="#111"/><circle cx="30" cy="41" r="3.4" fill="#111"/></svg>',
+  yield: '<svg viewBox="0 0 60 54"><path d="M3 4h54L30 51z" fill="#f7f7f4" stroke="#c8102e" stroke-width="6" stroke-linejoin="round"/></svg>',
+  nopass: '<svg viewBox="0 0 60 60"><circle cx="30" cy="30" r="26" fill="#f7f7f4" stroke="#c8102e" stroke-width="7"/>' +
+          '<g transform="translate(13 22)"><rect x="1" y="4" width="13" height="12" rx="3" fill="#c8102e"/><rect x="3" y="0" width="9" height="7" rx="2" fill="#c8102e"/></g>' +
+          '<g transform="translate(32 22)"><rect x="1" y="4" width="13" height="12" rx="3" fill="#111"/><rect x="3" y="0" width="9" height="7" rx="2" fill="#111"/></g></svg>'
+};
+function signKey(lim){ return lim ? lim.value + '|' + (lim.src === 'map' ? 'map' : 'cam') + '|' + (lim.led ? 1 : 0) + '|' + st.area.kind : ''; }
 function historyItem(lim){
   // a small picture of the sign that was on screen before this one
   let cls = 'mini', txt = lim.value === Infinity ? '' : lim.value;
@@ -473,19 +524,40 @@ function render(){
       calm: 'Traffic-calmed area, walking pace',
       kfs: 'Expressway, ' + lim.value + ' unless the lanes are separated',
       autobahn: noLimit ? 'Autobahn, no limit (130 advised)' : 'Autobahn, limit for your vehicle',
-      end: areaName ? 'End of limit, general ' + areaName + ' limit' : 'End of restrictions, general limit applies',
-      map: 'From map data until a sign is read'}[lim.src];
+      end: lim.why === 'zone_end' ? 'End of ' + (st.lastZone || '30') + ' zone, town limit' :
+           areaName ? 'End of limit, general ' + areaName + ' limit' : 'End of restrictions, general limit applies',
+      map: {newroad:'From map: new road, no sign read yet', weak:'From map: the last sign (' + lim.camValue + ') wasn\u2019t read clearly',
+            stale:'From map: no sign for 5 km'}[lim.why] || 'From map data until a sign is read'}[lim.src];
   } else {
     sign.classList.add('none'); sign.classList.remove('led', 'nolimit', 'walk', 'long');
     $('limitVal').textContent = st.running ? 'Looking for signs' : 'No sign yet';
     $('limitSrc').textContent = st.running ? 'Point the camera at the road ahead' : 'Tap Start to begin';
   }
-  if (lim && lim.cond){ badge.textContent = condIcon(lim.cond); badge.style.display = 'flex'; }
-  else badge.style.display = 'none';
+  badge.style.display = 'none';
+  // the plate under the sign: the condition in force, or one on this post that isn't in force now (faded)
+  const plate = $('plate');
+  let pc = lim && lim.src === 'sign' ? lim.cond : null, idle = false;
+  if (!pc && lim && lim.src === 'sign'){
+    const latest = st.rule.conds.filter(c => !condActive(c.cond)).sort((a, b) => b.time - a.time)[0];
+    if (latest && Date.now() - latest.time < 120000){ pc = latest.cond; idle = latest; }
+  }
+  if (pc){
+    const short = pc.type === 'unknown' ? 'Plate not readable' : condText(pc);
+    plate.innerHTML = '<span class="ic">' + condIcon(pc) + '</span>' + short.charAt(0).toUpperCase() + short.slice(1) +
+      (idle ? '<small>' + idle.value + ' then, not now</small>' : pc.type === 'unknown' ? '<small>limit applied to be safe</small>' : '');
+    plate.className = 'on' + (idle ? ' idle' : '');
+  } else plate.className = '';
+  // other signs seen recently
+  const ex = liveExtras(), exKey = ex.map(x => x.kind + x.time).join();
+  if (exKey !== renderedExtras){
+    const fresh = new Set(ex.filter(x => Date.now() - x.time < 1500).map(x => x.kind));
+    $('extras').innerHTML = ex.map(x => '<div class="xs' + (fresh.has(x.kind) ? ' fresh' : '') + '">' + EXTRA_SVG[x.kind] + EXTRA_NAME[x.kind] + '</div>').join('');
+    renderedExtras = exKey;
+  }
 
   // one line about conditional limits on this stretch
   let note = '';
-  if (lim && lim.cond){ const t = condText(lim.cond); note = t.charAt(0).toUpperCase() + t.slice(1) + ', in force now'; }
+  if (lim && lim.cond){ note = lim.cond.type === 'unknown' ? '' : 'In force now'; }        // (the plate itself shows the condition)
   else {
     const camT = cameraInfo();
     if (camT){
@@ -496,6 +568,7 @@ function render(){
   }
   if (!note && st.rule.pending) note = st.rule.pending.value + ' starts in ' + Math.max(0, Math.round((st.rule.pending.atOdo - st.odo) / 10) * 10) + ' m';
   if (!note && lim && lim.untilOdo != null) note = 'For ' + Math.max(0, Math.round((lim.untilOdo - st.odo) / 100) / 10) + ' km more';
+  if ($('plate').classList.contains('idle') && st.rule.conds.filter(c => !condActive(c.cond)).length === 1) note = '';
   $('condNote').textContent = note;
 
   // status chips
@@ -567,6 +640,7 @@ const OSM_ZONES = {'urban':50,'rural':100,'living_street':7,'walk':7};
 function parseMaxspeed(v){
   if (!v) return null;
   v = String(v).trim().toLowerCase();
+  if (v === 'none') return {v:Infinity, u:'kmh'};
   let m = v.match(/^(\d+)\s*mph$/); if (m) return {v:+m[1], u:'mph'};
   m = v.match(/^(\d+)(\s*km\/h)?$/); if (m) return {v:+m[1], u:'kmh'};
   m = v.match(/^[a-z]{2}:([a-z_]+)$/); if (m && OSM_ZONES[m[1]]) return {v:OSM_ZONES[m[1]], u:'kmh'};
@@ -576,27 +650,51 @@ function toUnit(o){
   if (o.u === S.unit) return o.v;
   return S.unit === 'mph' ? Math.round(o.v / 1.609344 / 5) * 5 : Math.round(o.v * 1.609344 / 10) * 10;
 }
+// distance (m) from p to segment a-b, and the segment's bearing
+function segInfo(p, a, b){
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), ky = 110540;
+  const ax = (a.lon - p.lng) * kx, ay = (a.lat - p.lat) * ky, bx = (b.lon - p.lng) * kx, by = (b.lat - p.lat) * ky;
+  const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+  const t = L ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L)) : 0;
+  return {d: Math.hypot(ax + t * dx, ay + t * dy), brg: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360};
+}
+const ROADS = 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|road';
+// pick the way we are driving on: the closest one that runs the way we're heading
+function pickRoad(elements, pos, heading){
+  let best = null;
+  (elements || []).forEach(e => {
+    const g = e.geometry || []; let d = 1e9, brg = null;
+    for (let k = 1; k < g.length; k++){ const si = segInfo(pos, g[k-1], g[k]); if (si.d < d){ d = si.d; brg = si.brg; } }
+    let score = d;
+    if (heading != null && brg != null){ const a = Math.abs(((heading - brg) % 180 + 180) % 180); if (Math.min(a, 180 - a) > 35) score += 25; }
+    if (e.tags && /_link$/.test(e.tags.highway || '')) score += 4;
+    if (e.tags && e.tags.highway === 'service') score += 8;
+    if (!best || score < best.score) best = {score, e};
+  });
+  return best && best.score < 40 ? best.e : null;
+}
+function applyRoad(e){
+  const t = e.tags || {};
+  st.road = {key: t.ref || t.name || ((t.highway || 'road') + ':' + e.id), name: t.name || t.ref || '', highway: t.highway};
+  const p = parseMaxspeed(t['maxspeed:forward'] || t.maxspeed);
+  if (p){
+    const v = p.v === Infinity ? Infinity : toUnit(p);
+    if (!st.mapLimit || st.mapLimit.value !== v) st.mapLimitChangedAt = Date.now();
+    st.mapLimit = {value:v, time:Date.now()};
+  } else st.mapLimit = null;      // this road has no limit in the map data
+}
 async function maybeQueryOsm(){
   if (!S.osm || osmBusy || !st.pos) return;
   const now = Date.now();
-  if (osmLast && (now - osmLastT < 8000 || haversine(osmLast, st.pos) < 60)) return;
+  if (osmLast && (now - osmLastT < 6000 || haversine(osmLast, st.pos) < 50)) return;
   osmBusy = true; osmLast = st.pos; osmLastT = now;
-  const q = '[out:json][timeout:8];way(around:18,' + st.pos.lat + ',' + st.pos.lng + ')[highway][maxspeed];out tags;';
+  const pos = st.pos, heading = st.heading;
+  const q = '[out:json][timeout:8];way(around:25,' + pos.lat + ',' + pos.lng + ')[highway~"^(' + ROADS + ')$"];out tags geom;';
   try {
     const r = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:'data=' + encodeURIComponent(q),
       headers:{'Content-Type':'application/x-www-form-urlencoded'}});
-    const j = await r.json(), counts = {};
-    (j.elements || []).forEach(e => {
-      const p = parseMaxspeed(e.tags && e.tags.maxspeed); if (!p) return;
-      const v = toUnit(p); counts[v] = (counts[v] || 0) + 1;
-    });
-    const best = Object.keys(counts).sort((a,b) => counts[b] - counts[a])[0];
-    if (best != null){
-      const v = +best;
-      if (!st.mapLimit || st.mapLimit.value !== v) st.mapLimitChangedAt = Date.now();
-      st.mapLimit = {value:v, time:Date.now()};
-      render();
-    }
+    const e = pickRoad((await r.json()).elements, pos, heading);
+    if (e){ applyRoad(e); render(); }
   } catch(e){}
   osmBusy = false;
 }
@@ -661,7 +759,7 @@ function findCandidates(){
   }
   // A second, wider gap-closing joins a ring that blur or a double image has split into pieces.
   // (Both are tried: the wider one can also join a ring onto a sign mounted just above it.)
-  const mask2 = dilate(mask, PW, PH), cands = [];
+  const mask2 = dilate(mask, PW, PH), cands = [], others = [];
   for (const mask of [mask0, mask2]){
   const lab = new Int32Array(N), stack = new Int32Array(N);
   let next = 1;
@@ -707,12 +805,25 @@ function findCandidates(){
     // a circle is as wide near its top as near its bottom; a warning triangle is not
     const span = yy => { let l = -1, r = -1; for (let x = x0; x <= x1; x++) if (lab[yy * PW + x] === id){ if (l < 0) l = x; r = x; } return l < 0 ? 0 : r - l + 1; };
     const topW = span(y0 + Math.round(h * 0.12)), botW = span(y1 - Math.round(h * 0.12));
-    if (!topW || !botW || topW / botW < 0.4 || topW / botW > 2.5) return;
+    if (!topW || !botW) return;
+    if (topW / botW < 0.4 || topW / botW > 2.5){
+      // A red-bordered triangle: warning sign (point up) or give way (point down). Must be hollow, not a red roof or car.
+      const tri = topW / botW < 0.35 ? 'warn' : topW / botW > 2.8 ? 'yield' : null;
+      if (tri && fill < 0.6 && ar > 0.8 && ar < 1.45 && w >= 14){
+        const cy = tri === 'warn' ? y0 + Math.round(h * 0.62) : y0 + Math.round(h * 0.35), cx = (x0 + x1) >> 1;
+        let n = 0, rd = 0;
+        for (let y = cy - (h >> 3); y <= cy + (h >> 3); y++) for (let x = cx - (w >> 3); x <= cx + (w >> 3); x++){ n++; if (red0[y * PW + x]) rd++; }
+        if (n && rd / n < 0.2) others.push({kind:tri, x:x0 * vw / PW, y:y0 * vw / PW, w:w * vw / PW, h:h * vw / PW});
+      }
+      return;
+    }
     const cx0 = x0 + Math.round(w * 0.28), cx1 = x1 - Math.round(w * 0.28);
     const cy0 = y0 + Math.round(h * 0.28), cy1 = y1 - Math.round(h * 0.28);
-    let tot = 0, red = 0, lt = 0, dk = 0, br = 0;
+    let tot = 0, red = 0, lt = 0, dk = 0, br = 0, redL = 0, redR = 0, dkL = 0, dkR = 0;
+    const cxm = (cx0 + cx1) / 2;
     for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++){
       const i = y * PW + x; tot++;
+      if (red0[i]){ if (x < cxm) redL++; else redR++; } else if (mxa[i] < Math.max(75, ringMx * 0.5) && mna[i] > 0.4 * mxa[i]){ if (x < cxm) dkL++; else dkR++; }
       // "white" is judged against the ring's own brightness, so signs in shade still count
       if (red0[i]) red++; else {
         if (mna[i] > 0.55 * mxa[i] && mxa[i] > 55 && mxa[i] >= ringMx * 0.85) lt++;
@@ -721,6 +832,10 @@ function findCandidates(){
     }
     if (!tot) return;
     const rf = red / tot, df = dk / tot, lf = lt / tot, bf = br / tot;
+    // No overtaking (276): on a white face, a red car on the left and a black car on the right
+    if (rf >= 0.05 && rf <= 0.5 && redL > 2 * redR && dkR > 1.5 * dkL && dkR / tot >= 0.04 && lf >= 0.2){
+      others.push({kind:'nopass', x:x0 * vw / PW, y:y0 * vw / PW, w:w * vw / PW, h:h * vw / PW}); return;
+    }
     // The face just inside the ring, above and below the digits: white on a printed sign, black on an electronic one.
     const fcx = (x0 + x1) / 2, fcy = (y0 + y1) / 2, rx = w / 2, ry = h / 2;
     let fn = 0, fDark = 0, fRed = 0, fLight = 0;
@@ -751,7 +866,9 @@ function findCandidates(){
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
   return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, blue, light, PW, PH, sc) : [],
           blues: S.country === 'de' ? findBlueSigns(red0, blue, light, PW, PH, sc) : [],
-          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc)).slice(0, 2)};
+          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc)).slice(0, 2),
+          others: others.filter((o, i) => !others.slice(0, i).some(q => Math.abs(q.x - o.x) < q.w / 2 && Math.abs(q.y - o.y) < q.h / 2)),
+          zones: S.country === 'de' ? findZoneBoards(red0, light, mxa, PW, PH, sc) : []};
 }
 
 function blobs(mask, W, H, minW, minH){
@@ -933,6 +1050,33 @@ function withoutPosts(m, W, H){
     }
   }
   return o;
+}
+/* End of a 30 zone (274.2): a white upright board with a grey "30" disc crossed by stripes and the word ZONE below.
+   It has no red at all. We find light upright rectangles with grey content and read the word. */
+function findZoneBoards(red0, light, mxa, W, H, sc){
+  const out = [];
+  const lc = dilate(withoutPosts(light, W, H), W, H);   // (no pole) the black stripes across the board would cut it into pieces
+  for (const b of blobs(lc, W, H, 14, 18)){
+    const ar = b.w / b.h, fill = b.n / (b.w * b.h);
+    if (b.x0 === 0 || b.y0 === 0 || b.x1 === W - 1 || b.y1 === H - 1 || b.h > H * 0.35) continue;
+    if (ar < 0.55 || ar > 1.05 || fill < 0.8) continue;           // a solid upright board
+    // square corners (a board, not a disc)
+    const cornerLight = [[b.x0, b.y0, 1, 1], [b.x1, b.y0, -1, 1], [b.x0, b.y1, 1, -1], [b.x1, b.y1, -1, -1]].filter(([x, y, sx, sy]) => {
+      let n = 0; for (let k = 0; k < 3; k++) for (let j = 0; j < 3; j++) if (lc[(y + sy * k) * W + x + sx * j]) n++;
+      return n >= 5; }).length;
+    if (cornerLight < 3) continue;
+    if (frac(red0, W, b.x0, b.y0, b.x1, b.y1) > 0.004) continue;          // a red ring: that's the start of a zone, read as a limit
+    // grey/dark content in the upper part (the crossed-out disc)
+    // grey and black content in the upper part (the crossed-out disc), judged against the board's own white
+    const vals = []; for (let y = b.y0 + 1; y < b.y1; y++) for (let x = b.x0 + 1; x < b.x1; x++) vals.push(mxa[y * W + x]);
+    vals.sort((p, q) => p - q); const white = vals[Math.floor(vals.length * 0.9)];
+    let n = 0, gr = 0;
+    for (let y = b.y0 + Math.round(b.h * 0.1); y < b.y0 + Math.round(b.h * 0.6); y++) for (let x = b.x0 + 2; x <= b.x1 - 2; x++){ n++; if (mxa[y * W + x] < white * 0.8) gr++; }
+    if (S.debug && window.__D) window.__D.push({s:'zb', w:b.w, h:b.h, ar:+ar.toFixed(2), fill:+fill.toFixed(2), cont:+(gr / n).toFixed(2)});
+    if (!n || gr / n < 0.08 || gr / n > 0.8) continue;
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h});
+  }
+  return out.sort((a, b) => b.size - a.size).slice(0, 1);
 }
 function findWhiteDiscs(red0, light, yel, W, H, sc){
   const out = [];
@@ -1318,7 +1462,8 @@ function mergeConds(list){
 }
 function parsePlateText(raw){
   const t = raw.toLowerCase().replace(/[–—_]/g, '-').replace(/[|]/g, '1').replace(/\s+/g, ' ').trim();
-  if (/\b[z2]?[o0]n[e3]\b|\bzon/.test(t)) return {type:'zone'};      // Tempo-30-Zone sign (274.1): not a condition
+  // ZONE, also as the reader often gets it wrong: LUNE, ZUNL, ZONL…
+  if (/\b[z2]?[o0]n[e3]\b|\bzon|\b[zl2][ou0q][nm][elil3]\b/.test(t)){ zoneSeenAt = Date.now(); return {type:'zone'}; }      // Tempo-30-Zone sign (274.1): not a condition
   return mergeConds([parseVehicle(t), parseOther(t)]);
 }
 function parseOther(t){
@@ -1349,7 +1494,7 @@ function parseOther(t){
   return null;
 }
 
-let worker = null, plateWorker = null, busy = false;
+let worker = null, plateWorker = null, busy = false, zoneSeenAt = 0;
 async function initReader(){
   const opts = window.SIGNVIEW_TESS_OPTS || {};
   worker = await Tesseract.createWorker('eng', 1, opts);
@@ -1442,6 +1587,29 @@ function looksLikeTownName(read, end){
   return true;
 }
 
+/* Other signs shown beside the limit: warning triangle, give way, no overtaking. Seen twice to count. */
+// shown until this far has been driven past the sign, or at most this long
+const EXTRA_LIFE = {warn:{m:400, s:120}, yield:{m:150, s:60}, nopass:{m:2000, s:1800}};
+function extraEvent(kind){
+  const now = Date.now(), key = 'x:' + kind;
+  st.reads = st.reads.filter(r => now - r.t < 5000);
+  st.reads.push({key, t:now, conf:0});
+  if (st.reads.filter(r => r.key === key).length < 2) return;
+  const e = st.extras.find(x => x.kind === kind);
+  if (e){ e.time = now; e.odo = st.odo; }
+  else st.extras.unshift({kind, time:now, odo:st.odo});
+  render();
+}
+function liveExtras(){
+  const now = Date.now();
+  st.extras = st.extras.filter(x => {
+    const L = EXTRA_LIFE[x.kind];
+    const age = (now - x.time) / 1000;
+    return age < 8 || (st.odo - x.odo < L.m && age < L.s);
+  }).filter(x => !(x.kind === 'nopass' && st.lastEnd > x.time));          // an end sign also ends the overtaking ban
+  return st.extras;
+}
+
 /* Town entered/left, or end-of-limit sign: these reset the limit to the general one. */
 function areaEvent(kind){
   const now = Date.now(), key = 'area:' + kind;
@@ -1460,9 +1628,16 @@ function areaEvent(kind){
   } else {
     if (now - st.lastEnd < 8000){ st.lastEnd = now; return; }
     st.lastEnd = now;
+    // Not yet known whether we're in a town: a 30 zone only exists in towns, and the end of a limit of 50 or less
+    // is almost always in a town too. Above that, it's almost always outside a town.
+    if (!st.area.kind && S.country === 'de'){
+      const prev = st.lastLim && isFinite(st.lastLim.value) ? st.lastLim.value : null;
+      if (kind === 'zone_end' || (prev != null && prev <= inUnit(50))) st.area = {kind:'town', time:now, guessed:true};
+      else if (prev != null) st.area = {kind:'rural', time:now, guessed:true};
+    }
     const dv = defaultLimit();
     // Not known whether we're in a town: show the end-of-restrictions symbol itself (no warning) instead of a number.
-    R.base = {value: dv != null ? dv : Infinity, time:now, src:'end'};
+    R.base = {value: dv != null ? dv : Infinity, time:now, src:'end', why:kind};
     R.endTime = now;
   }
   R.conds = []; R.prevBase = null; R.fallback = null; R.pending = null;
@@ -1470,7 +1645,8 @@ function areaEvent(kind){
 }
 
 Object.assign(window.__signviewTest, {parsePlateText: t => parsePlateText(t), condActive: c => condActive(c), mergeConds: l => mergeConds(l),
-  accept: (v, conf, cond, led) => accept(v, conf, cond, led), current: () => currentLimit(), set: o => Object.assign(S, o)});
+  accept: (v, conf, cond, led) => accept(v, conf, cond, led), current: () => currentLimit(), set: o => Object.assign(S, o),
+  area: k => areaEvent(k), extra: k => extraEvent(k), pickRoad: (e, p, h) => pickRoad(e, p, h)});
 /* ---------- combining reads ---------- */
 function condKey(c){
   if (!c) return 'none';
@@ -1492,10 +1668,12 @@ function accept(v, conf, cond, led){
   if (!sk || now - sk.last > 1500) st.seen[key] = {first:now, last:now}; else sk.last = now;
   const first = st.seen[key].first, samePost = t => t >= first - 1000;
   if (!(same >= 2 || conf >= 82)) return;
+  // a clear reading (high confidence, or the same value read several times) is kept even where map data disagrees
+  const strong = conf >= 80 || same >= 3;
   const R = st.rule;
   // Same sign as a conditional one we just read, but the plate under it is out of view or unreadable now.
   const twin = R.conds.find(c => c.value === v && now - c.time < 8000 && c.cond.type !== 'unknown');
-  if (twin && (!cond || cond.type === 'unknown')){ twin.time = now; render(); return; }
+  if (twin && (!cond || cond.type === 'unknown')){ twin.time = now; twin.strong = twin.strong || strong; render(); return; }
   if (twin && cond.type === 'time' && !cond.days && twin.cond.type === 'time' && twin.cond.days &&
       twin.cond.from === cond.from && twin.cond.to === cond.to) cond = twin.cond;
   const older = c => !samePost(c.time);
@@ -1506,15 +1684,15 @@ function accept(v, conf, cond, led){
   if (cond && cond.type === 'length'){                        // a plain limit that ends after a distance
     if (!(R.base && R.base.value === v && R.base.untilOdo != null)){
       R.fallback = {base:R.base, conds:R.conds.filter(older), fallback:R.fallback};
-      R.base = {value:v, time:now, led, untilOdo: st.odo + cond.m};
+      R.base = {value:v, time:now, led, strong, untilOdo: st.odo + cond.m};
       R.conds = R.conds.filter(c => samePost(c.time));
-    } else R.base.time = now;
+    } else { R.base.time = now; R.base.strong = R.base.strong || strong; }
     render(); return;
   }
   if (!cond){
-    if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base.time = now; R.base.led = led; }
+    if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base.time = now; R.base.led = led; R.base.strong = R.base.strong || strong; }
     else { R.prevBase = R.base; R.prevFallback = R.fallback; R.prevConds = R.conds.filter(c => !samePost(c.time));
-           R.base = {value:v, time:now, led}; R.fallback = null; R.pending = null; }
+           R.base = {value:v, time:now, led, strong}; R.fallback = null; R.pending = null; }
     R.conds = R.conds.filter(c => samePost(c.time));              // a new plain limit replaces everything before it
   } else {
     // The plate was too small to see on earlier reads: this sign was taken as a plain limit. Undo that.
@@ -1534,8 +1712,9 @@ function accept(v, conf, cond, led){
       R.fallback = {base:R.base, conds:olderConds, fallback:R.fallback};
       R.base = null;
     }
+    const was = R.conds.find(c => c.value === v && condKey(c.cond) === condKey(cond));
     R.conds = R.conds.filter(c => samePost(c.time) && !(c.value === v && (c.cond.type === cond.type || c.cond.type === 'unknown')));
-    R.conds.push({value:v, cond, time:now, led});
+    R.conds.push({value:v, cond, time:now, led, strong: strong || !!(was && was.strong)});
   }
   render();
 }
@@ -1580,6 +1759,27 @@ async function loop(){
         boxes.push(Object.assign({color: ok ? '#c77dff' : '#ffd166'}, e));
         if (ok) break;
       }
+      for (const o of found0.others){
+        extraEvent(o.kind); boxes.push(Object.assign({color:'#ff9f1c'}, o));
+      }
+      for (const z of found0.zones){
+        let ok = false;
+        if (!(Date.now() - st.lastEnd < 8000)){
+          // read the word under the disc
+          const zh = z.h * 0.42, zy = z.y + z.h * 0.58, W2 = 200, H2 = Math.max(30, Math.round(W2 * zh / z.w));
+          pcan.width = W2; pcan.height = H2; plctx.filter = 'grayscale(1) contrast(1.6)';
+          plctx.drawImage(video, z.x, zy, z.w, zh, 0, 0, W2, H2); plctx.filter = 'none';
+          try { const t = (await plateWorker.recognize(pcan)).data.text || ''; ok = /z\s*[o0]\s*n|[o0]\s*n\s*[e3]\b|\b[zl2][ou0q][nm][elil3]\b/i.test(t);
+                if (S.debug && window.__D) window.__D.push({s:'zone', text:t, ok}); } catch(e){}
+        } else ok = true;
+        if (ok){
+          // the striped disc on the board may already have been taken as a plain end sign: it's the end of the zone
+          if (Date.now() - st.lastEnd < 8000 && st.rule.base && st.rule.base.src === 'end'){ st.rule.base.why = 'zone_end'; if (!st.area.kind) st.area = {kind:'town', time:Date.now(), guessed:true}; render(); }
+          else areaEvent('zone_end');
+          found.push({end:'zone'});
+        }
+        boxes.push(Object.assign({color: ok ? '#c77dff' : '#ffd166'}, z));
+      }
       for (const c of cands){
         let {v, conf} = await readNumber(c);
         if (!(v && VALID[S.unit].includes(v) && conf >= 55) && c.alt){
@@ -1596,6 +1796,9 @@ async function loop(){
             pr.plates.forEach(pl => boxes.push(Object.assign({color:'#4ea1ff'}, pl)));
           }
           accept(v, conf, cond, c.kind === 'led');
+          if (Date.now() - zoneSeenAt < 1500){          // start of a 30 (or 20) zone: zones are always in towns
+            st.lastZone = v; if (!st.area.kind) st.area = {kind:'town', time:Date.now(), guessed:true};
+          }
           boxes.push(Object.assign({color:'#3ddc84'}, c));
           found.push({v, kind:c.kind, cond});
         } else boxes.push(Object.assign({color:'#ffd166'}, c));
