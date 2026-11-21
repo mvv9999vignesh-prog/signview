@@ -876,6 +876,9 @@ function findCandidates(){
     }
     if (!tot) return;
     const rf = red / tot, df = dk / tot, lf = lt / tot, bf = br / tot;
+    // A traffic light's lit red lamp in its black housing (often next to a warning triangle) makes a tall red blob
+    // with a dark middle; a sign seen at an angle is narrow too, but its middle is mostly white face.
+    if (ar < 0.8 && df > 0.1 && lf < 0.4) return;
     // No overtaking (276): on a white face, a red car on the left and a black car on the right
     if (rf >= 0.05 && rf <= 0.5 && redL > 2 * redR && dkR > 1.5 * dkL && dkR / tot >= 0.04 && lf >= 0.2){
       others.push({kind:'nopass', x:x0 * vw / PW, y:y0 * vw / PW, w:w * vw / PW, h:h * vw / PW}); return;
@@ -910,8 +913,11 @@ function findCandidates(){
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
   return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, blue, light, PW, PH, sc) : [],
           blues: S.country === 'de' ? findBlueSigns(pink, blue, light, PW, PH, sc) : [],
-          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc)).slice(0, 2),
-          others: others.filter((o, i) => !others.slice(0, i).some(q => Math.abs(q.x - o.x) < q.w / 2 && Math.abs(q.y - o.y) < q.h / 2)),
+          // (signs stand beside or above the road: nothing in the bottom quarter of the picture, which is road surface,
+          //  bonnet and dashboard; there, painted arrows and lettering only cause false alarms)
+          ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc))
+                  .filter(e => e.y + e.h / 2 < vh * 0.75).slice(0, 2),
+          others: others.filter((o, i) => o.y + o.h / 2 < vh * 0.75 && !others.slice(0, i).some(q => Math.abs(q.x - o.x) < q.w / 2 && Math.abs(q.y - o.y) < q.h / 2)),
           zones: S.country === 'de' ? findZoneBoards(red0, light, mxa, PW, PH, sc) : []};
 }
 
@@ -971,6 +977,11 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
     const corners = [[b.x0, b.y0], [b.x1 - cw, b.y0], [b.x0, b.y1 - ch], [b.x1 - cw, b.y1 - ch]]
       .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));        // (the red stripe reaches two corners)
     if (Math.min.apply(null, corners) < 0.35) continue;
+    // ...and its two ends are full height; an arrow-shaped direction sign narrows to a point at one end
+    const colCov = x => { let n = 0; for (let y = b.y0; y <= b.y1; y++) if (both[y * W + x]) n++; return n / b.h; };
+    const ex = Math.max(1, Math.round(b.w * 0.06));
+    const covL = colCov(b.x0 + ex), covR = colCov(b.x1 - ex), covM = colCov(Math.round((b.x0 + b.x1) / 2));
+    if (Math.min(covL, covR) < 0.6 * Math.max(covM, 0.5)) continue;
     // lettering: pixels clearly darker than the sign's own yellow (works in shade and when the text is blurred by distance)
     let ys = 0, yn = 0, dn = 0, yls = 0;
     const L = i => 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
@@ -978,7 +989,7 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
     const ymean = yn ? ys / yn : 200, ylum = yn ? yls / yn : 160;
     // (at a distance or through glare the lettering can itself look yellowish, so judge by brightness alone)
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++){ const i = y * W + x; if (!red0[i] && L(i) < ylum * 0.86) dn++; }
-    const df = dn / (b.w * b.h); if (df < 0.015 || df > 0.5) continue;
+    const df = dn / (b.w * b.h); if (df < 0.06 || df > 0.5) continue;
     // red stripe rising from left to right?
     const mid = (b.x0 + b.x1) / 2; let nl = 0, nr = 0, yl = 0, yr = 0;
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
@@ -1325,9 +1336,10 @@ async function readNumber(c){
   }
   if (v && VALID[S.unit].includes(v) && conf >= 55 && solidPictogram(prepareCrop(c, 0))) { v = NaN; conf = 0; }
   // A single digit is usually a misread part of a blurred two-digit sign (5 km/h signs are rare): only take a very clear one.
+  const raw = (res.data.text || '').replace(/\D/g, '');
   if (v < 10 && conf < 88) { v = NaN; conf = 0; }
   if (S.debug && window.__D) window.__D.push({s:'ocr', kind:c.kind, w:Math.round(c.w), text:res.data.text, conf:Math.round(conf)});
-  return {v, conf};
+  return {v, conf, raw};
 }
 function prepareCrop(c, variant){
   // variant 1 is a slightly larger box, tried when the first read fails (angled or off-centre numbers)
@@ -1422,6 +1434,15 @@ function findPlate(c){ const why = m => { if (S.debug) window.__fpWhy = m; retur
     const p = (y*SW+x)*4; if (Math.max(d[p],d[p+1],d[p+2]) < 90) dk++; rd += redm[y*SW+x]; }
   if (rd > pw * ph * 0.02) return why('red ' + rd);
   const dr = dk / (pw * ph); if (dr < 0.02 || dr > 0.45) return why('dark ' + dr.toFixed(2));
+  // A real plate is as white as the sign's own face. Grey walls, balconies, car bodies and sky are duller:
+  // taking them for plates turns a plain limit into one that "only applies at night / when wet".
+  let pm = 0, pn = 0;
+  for (let y = top; y <= bot; y++) for (let x = l; x <= r; x++){ const p = (y*SW+x)*4; if (white[y*SW+x]){ pm += Math.max(d[p],d[p+1],d[p+2]); pn++; } }
+  const fc = document.createElement('canvas'); fc.width = 16; fc.height = 16; const fx = fc.getContext('2d', {willReadFrequently:true});
+  fx.drawImage(video, c.x + c.w * 0.3, c.y + c.h * 0.22, c.w * 0.4, c.h * 0.12, 0, 0, 16, 16);   // the face above the digits
+  const fd = fx.getImageData(0, 0, 16, 16).data; let fm = 0, fn = 0;
+  for (let p = 0; p < fd.length; p += 4){ const mx = Math.max(fd[p], fd[p+1], fd[p+2]), mn = Math.min(fd[p], fd[p+1], fd[p+2]); if (mn > 0.7 * mx){ fm += mx; fn++; } }
+  if (pn && fn > 20 && pm / pn < 0.85 * (fm / fn)) return why('dull ' + Math.round(pm / pn) + ' vs face ' + Math.round(fm / fn));
   if (S.debug) window.__fpWhy = 'ok';
   const sx = rw / SW, sy = rh / SH;
   return {x: rx + l * sx, y: ry + top * sy, w: pw * sx, h: ph * sy};
@@ -1575,7 +1596,7 @@ function parseOther(t){
   return null;
 }
 
-let worker = null, plateWorker = null, busy = false, zoneSeenAt = 0;
+let worker = null, plateWorker = null, busy = false, zoneSeenAt = 0, lastPlate = null, hot = false, hotRun = 0;
 async function initReader(){
   const opts = window.SIGNVIEW_TESS_OPTS || {};
   worker = await Tesseract.createWorker('eng', 1, opts);
@@ -1641,6 +1662,22 @@ async function readTownText(t, part){
   }
   for (let i = 0, q = 0; q < d.length; i++, q += 4){ const v = (!skip[i] && lum[i] <= thr) ? 0 : 255; d[q] = d[q+1] = d[q+2] = v; d[q+3] = 255; }
   plctx.putImageData(img, 0, 0);
+  // A direction arrow: one dark shape at the left or right end, at least half the sign's height (letters are smaller).
+  // Town signs never have arrows.
+  let arrow = false;
+  if (!part){
+    const bin = new Uint8Array(PWc * pcan.height);
+    for (let i = 0; i < bin.length; i++) bin[i] = d[i * 4] === 0 ? 1 : 0;
+    const ks = components(bin, PWc, pcan.height).filter(k => k.y0 >= pad && k.y1 < pad + H && k.n / (k.w * k.h) < 0.6);   // (a solid border line isn't an arrow)
+    const hs = ks.map(k => k.h).filter(h => h >= H * 0.08 && h <= H * 0.5).sort((p, q) => p - q);
+    const letter = hs.length ? hs[Math.floor(hs.length / 2)] : H * 0.2;
+    for (const k of ks){
+      const cx = (k.x0 + k.x1) / 2 - pad;
+      // (bigger than the letters around it, at one end, not the sign's border)
+      if (k.h >= Math.max(H * 0.33, letter * 1.4) && k.h <= H * 0.9 && k.w > H * 0.12 && k.w < W * 0.3 &&
+          (cx < W * 0.25 || cx > W * 0.75) && k.n / (k.w * k.h) < 0.6) arrow = true;
+    }
+  }
   // Layout: rows of lettering, their heights and how centred they are.
   const rows = []; let inRow = false, r0 = 0;
   const rowDark = y => { let n = 0; for (let x = pad; x < pad + W; x++) if (d[(y * PWc + x) * 4] === 0) n++; return n; };
@@ -1652,7 +1689,7 @@ async function readTownText(t, part){
   const bands = rows.map(([a, b]) => {
     let l = PWc, r = 0;
     for (let y = a; y <= b; y++) for (let x = pad; x < pad + W; x++) if (d[(y * PWc + x) * 4] === 0){ if (x < l) l = x; if (x > r) r = x; }
-    return {h: b - a + 1, left: (l - pad) / W, right: (pad + W - 1 - r) / W};
+    return {h: b - a + 1, top: (a - pad) / H, left: (l - pad) / W, right: (pad + W - 1 - r) / W};
   });
   if (S.debug && window.__D && window.__D.length < 5000) window.__D.push({s:'towncrop', part:part || 'all', img:pcan.toDataURL()});
   let text = '';
@@ -1661,28 +1698,36 @@ async function readTownText(t, part){
     const top = await readTownText(t, 'top');
     if (top.text) text = top.text + (text ? '\n' + text : '');
   }
-  return {text, bands, H};
+  return {text, bands, H, ar: t.w / t.h, arrow};
 }
 function looksLikeTownName(read, end){
   const t = read.text.toLowerCase(), digits = (t.match(/\d/g) || []).length;
   if (/\b(dhl|post|taxi)\b/.test(t) || /^\W*b\s*\d/.test(t)) return false;      // vans, B-road number plates
   if (end) return /[a-zäöü]{3,}/.test(t);   // the crossed-out name reads badly, but some lettering must be there
+  if (read.arrow) return false;
   if (!/[a-zäöü]{3,}/.test(t)) return false;                                     // a place name has letters
   // A town sign has no distances; direction signs do ("Altdorf 12 km").
   if (/\bkm\b/.test(t) || digits >= 3) return false;
+  // words that only appear on direction signs: "zur A5", "nach", "Richtung", "Ausfahrt", "Umleitung", "Zentrum"
+  if (/\b(z?ur|nach|richtung|ausfahrt|umleitung|zentrum|alle richtungen|bahnhof)\b/.test(t)) return false;
+  // a town sign has the name and at most two smaller lines; a board listing destinations has more
+  if (read.text.split('\n').filter(l => /[a-zäöü]{3,}/i.test(l)).length >= 4) return false;
   // A clear place name: one word of five or more letters starting with a capital ("Wiesloch", "St. Leon-Rot").
   const name = /(^|\s)[A-ZÄÖÜ][a-zäöüß]{4,}/.test(read.text) || /(^|\s)St[.,]?\s*[A-ZÄÖÜ][a-zäöüß]{2,}/.test(read.text);
   // (specks of a few pixels are not lines of text)
   const b = read.bands.filter(x => x.h >= read.H * 0.1).sort((p, q) => q.h - p.h);
   // When the lines can't be measured (a small, blurred sign whose border runs them all together), some clear
   // lettering is enough: direction boards were already turned away by their shape, arrows, gaps and coloured panels.
-  if (!b.length || b[0].h > read.H * 0.5) return name || /[a-zäöü]{4,}/.test(t);
+  // (town signs are landscape, about 3:2; direction boards with an arrow under the names are about square or upright)
+  if (!b.length || b[0].h > read.H * 0.5) return read.ar >= 1.2 && (name || (read.ar >= 1.3 && /[a-zäöü]{4,}/.test(t)));
   if (digits >= 2) return false;
   // Layout: one large, centred name, maybe smaller lines (district, county) under it. Direction boards have
   // several rows of the same size, usually left-aligned next to arrows.
   if (b.length > 5) return false;
   if (Math.abs(b[0].left - b[0].right) > 0.2) return false;
-  if (b.length >= 2 && b[0].h < b[1].h * 1.25) return name && b[0].h >= b[1].h;
+  // the name is the biggest line and it is at the top; on direction boards the biggest thing is the arrow, below the names
+  if (b[0].top > 0.4 || !/[a-zäöü]{4,}/i.test(read.text)) return false;
+  if (b.length >= 2 && b[0].h < b[1].h * 1.25) return false;
   return true;
 }
 
@@ -1714,7 +1759,8 @@ function areaEvent(kind){
   const now = Date.now(), key = 'area:' + kind;
   st.reads = st.reads.filter(r => now - r.t < 5000);
   st.reads.push({key, t:now, conf:0});
-  if (st.reads.filter(r => r.key === key).length < 2) return;
+  // (an end sign needs three sightings: white walls and window frames with a diagonal shadow can pass once or twice)
+  if (st.reads.filter(r => r.key === key).length < (kind === 'end' ? 3 : 2)) return;
   const R = st.rule;
   // a speed sign mounted on the same post as the town sign wins over the general limit
   const keepSign = R.base && (R.base.src || 'sign') === 'sign' && now - R.base.time < 1500;
@@ -1722,6 +1768,9 @@ function areaEvent(kind){
   if (AREA[kind]){
     const k = AREA[kind];
     if (st.area.kind === k && now - st.area.time < 60000){ st.area.time = now; return; }   // same sign, still in view
+    // You can't enter a town you're already in: while in a town, a "town sign" is far more likely a yellow
+    // direction board misread than a real one (the next town's sign comes after this town's exit sign).
+    if (kind === 'in' && st.area.kind === 'town'){ st.area.time = now; return; }
     st.area = {kind:k, time:now};
     if (!keepSign) R.base = {value:defaultLimit(), time:now, src:k, why:kind};
   } else {
@@ -1756,12 +1805,45 @@ function condKey(c){
   if (c.type === 'length' || c.type === 'ahead') return c.type + Math.round(c.m);
   return c.type;
 }
-function accept(v, conf, cond, led){
+function weakRead(v){
+  const now = Date.now();
+  st.reads = st.reads.filter(r => now - r.t < 5000);
+  st.reads.push({key: v + '|weak', t:now, conf:0});
+  // a confident read of this number in the last 3 s that wasn't confirmed yet: this confirms it
+  const strongRead = st.reads.find(r => r.key.startsWith(v + '|') && r.key !== v + '|weak' && r.conf >= 55 && now - r.t < 3000);
+  if (strongRead && strongRead.pending) accept(v, strongRead.conf, strongRead.cond, strongRead.led, true);
+}
+// The same sign read again but with its last digit lost ("7" just after a confident "70", as it gets closer and blurs)
+function weakPrefix(digits){
+  const now = Date.now();
+  const r = st.reads.find(x => x.pending && x.conf >= 55 && now - x.t < 2000 && x.key.split('|')[0].length > digits.length && x.key.startsWith(digits));
+  if (r) accept(+r.key.split('|')[0], r.conf, r.cond, r.led, true);
+}
+// A sign read clearly only once, because it was in view too briefly for a second read: still taken when a sign
+// stayed in view for several frames and nothing different was read in the meantime.
+let candTimes = [];
+function confirmLoneReads(){
+  const now = Date.now();
+  candTimes = candTimes.filter(t => now - t < 5000);
+  for (const r of st.reads){
+    if (!r.pending || r.conf < 55 || r.key.endsWith('|weak') || now - r.t < 1200 || now - r.t > 4000) continue;
+    const v = r.key.split('|')[0];
+    const rival = st.reads.some(o => o !== r && o.key.split('|')[0] !== v && Math.abs(o.t - r.t) < 2500);
+    const frames = candTimes.filter(t => Math.abs(t - r.t) < 1500).length;
+    r.pending = false;
+    if (!rival && frames >= 3) accept(+v, r.conf, r.cond, r.led);   // (the earlier read plus this one: two sightings)
+  }
+}
+function accept(v, conf, cond, led, confirmedByWeak){
   const now = Date.now();
   const key = v + '|' + condKey(cond);
   st.reads = st.reads.filter(r => now - r.t < 5000);
-  st.reads.push({key, t:now, conf});
-  const same = st.reads.filter(r => r.key === key).length;
+  // (a weak read of the same number in the last 3 s counts as one more sighting)
+  const weak = st.reads.some(r => r.key === v + '|weak' && now - r.t < 3000);
+  const me = {key, t:now, conf, cond, led, pending:true};
+  st.reads.push(me);
+  const same = st.reads.filter(r => r.key === key).length + ((weak || confirmedByWeak) ? 1 : 0);
+  if (same >= 2 || conf >= 82) st.reads.forEach(r => { if (r.key === key) r.pending = false; });
   // when did we start seeing this sign? Signs on the same post are seen at the same time.
   const sk = st.seen[key];
   if (!sk || now - sk.last > 1500) st.seen[key] = {first:now, last:now}; else sk.last = now;
@@ -1769,6 +1851,8 @@ function accept(v, conf, cond, led){
   if (!(same >= 2 || conf >= 82)) return;
   // 10 and 15 are rare and are what a 100 or 150 looks like when its last digit is cut off: need three clear reads
   if (v <= inUnit(15) && !(same >= 3 && conf >= 75)) return;
+  // 100 and more inside a town is practically always a misread ("130" for a 30 with the ring's edge taken for a 1)
+  if (st.area.kind === 'town' && v >= inUnit(100) && !(same >= 3 && conf >= 85)) return;
   // a clear reading (high confidence, or the same value read several times) is kept even where map data disagrees
   const strong = conf >= 80 || same >= 3;
   const R = st.rule;
@@ -1793,7 +1877,9 @@ function accept(v, conf, cond, led){
   if (!cond){
     if (R.base && R.base.value === v && now - R.base.time < 6000){ R.base.time = now; R.base.led = led; R.base.strong = R.base.strong || strong; }
     else { R.prevBase = R.base; R.prevFallback = R.fallback; R.prevConds = R.conds.filter(c => !samePost(c.time));
-           R.base = {value:v, time:now, led, strong}; R.fallback = null; R.pending = null; }
+           R.base = {value:v, time:now, led, strong}; R.fallback = null; R.pending = null;
+           // 70 and above is practically never a limit inside a town: the town's exit sign was missed
+           if (st.area.kind === 'town' && v >= inUnit(70)) st.area = {kind:'rural', time:now, guessed:true}; }
     R.conds = R.conds.filter(c => samePost(c.time));              // a new plain limit replaces everything before it
   } else {
     // The plate was too small to see on earlier reads: this sign was taken as a plain limit. Undo that.
@@ -1838,6 +1924,51 @@ async function loop(){
     const boxes = [], found = [];
     try {
       const found0 = findCandidates(), cands = found0.signs;
+      // A speed sign in view is only readable for about a second: spend this frame on it alone
+      // (town, blue, zone and end signs are looked at again on the next frames).
+      hot = cands.some(c => c.w >= 30);
+      if (cands.some(c => c.w >= 20)) candTimes.push(Date.now());
+      confirmLoneReads();
+      // (every third frame still looks at them: a blue or end sign can share the post with the speed sign)
+      hotRun = hot ? hotRun + 1 : 0;
+      if (hot && hotRun % 3){ found0.towns = []; found0.blues = []; found0.zones = []; found0.ends = []; }
+      // Speed signs first: they are only big enough to read for about a second before you pass them.
+      for (const c of cands){
+        if (c.w < 30){ boxes.push(Object.assign({color:'#ffd166'}, c)); continue; }    // too small to read yet
+        let {v, conf, raw} = await readNumber(c);
+        if (!(v && VALID[S.unit].includes(v) && conf >= 55) && c.alt && c.w >= 45){   // (small signs: no time for a second try)
+          // a dim sign at dusk can look like either kind: read it the other way round too
+          const other = Object.assign({}, c, {kind: c.kind === 'led' ? 'print' : 'led'});
+          const r2 = await readNumber(other);
+          if (r2.v && VALID[S.unit].includes(r2.v) && r2.conf >= 55){ v = r2.v; conf = r2.conf; c.kind = other.kind; }
+        }
+        if (v && VALID[S.unit].includes(v) && conf >= 55){
+          let cond = null;
+          if (c.kind === 'print'){
+            // the same sign read again a moment ago, with its plate already understood: don't read the plate again
+            const lp = lastPlate, now = Date.now();
+            if (lp && lp.v === v && now - lp.t < 1200 && Math.abs(c.x + c.w / 2 - lp.cx) < c.w * 2 && lp.cond && lp.cond.type !== 'unknown') cond = lp.cond;
+            else {
+              const pr = await readPlate(c);
+              cond = pr.cond;
+              pr.plates.forEach(pl => boxes.push(Object.assign({color:'#4ea1ff'}, pl)));
+            }
+            lastPlate = {v, cond, t:now, cx: c.x + c.w / 2};
+          }
+          accept(v, conf, cond, c.kind === 'led');
+          if (Date.now() - zoneSeenAt < 1500){          // start of a 30 (or 20) zone: zones are always in towns
+            st.lastZone = v; if (!st.area.kind) st.area = {kind:'town', time:Date.now(), guessed:true};
+          }
+          boxes.push(Object.assign({color:'#3ddc84'}, c));
+          found.push({v, kind:c.kind, cond});
+        } else {
+          // A clean read of a real limit with no confidence (the reader often says 0 on correct reads): not enough on its
+          // own, but it counts as a second sighting for a confident read of the same number just before or after.
+          if (v && VALID[S.unit].includes(v) && v >= inUnit(20)) weakRead(v);
+          else if (raw && raw.length < 3) weakPrefix(raw);
+          boxes.push(Object.assign({color:'#ffd166'}, c));
+        }
+      }
       for (const t of found0.towns){
         const read = await readTownText(t);
         const ok = looksLikeTownName(read, t.end);
@@ -1866,6 +1997,9 @@ async function loop(){
       }
       for (const e of found0.ends){
         const ok = confirmEndSign(e);
+        if (ok && S.debug && window.__D){ const k = document.createElement('canvas'); k.width = 96; k.height = 96;
+          k.getContext('2d').drawImage(video, e.x - e.w * 0.5, e.y - e.h * 0.5, e.w * 2, e.h * 2, 0, 0, 96, 96);
+          window.__D.push({s:'endok', x:Math.round(e.x), y:Math.round(e.y), w:Math.round(e.w), h:Math.round(e.h), img:k.toDataURL('image/jpeg', 0.8)}); }
         if (ok){ areaEvent('end'); found.push({end:true}); }
         boxes.push(Object.assign({color: ok ? '#c77dff' : '#ffd166'}, e));
         if (ok) break;
@@ -1892,35 +2026,12 @@ async function loop(){
         }
         boxes.push(Object.assign({color: ok ? '#c77dff' : '#ffd166'}, z));
       }
-      for (const c of cands){
-        let {v, conf} = await readNumber(c);
-        if (!(v && VALID[S.unit].includes(v) && conf >= 55) && c.alt){
-          // a dim sign at dusk can look like either kind: read it the other way round too
-          const other = Object.assign({}, c, {kind: c.kind === 'led' ? 'print' : 'led'});
-          const r2 = await readNumber(other);
-          if (r2.v && VALID[S.unit].includes(r2.v) && r2.conf >= 55){ v = r2.v; conf = r2.conf; c.kind = other.kind; }
-        }
-        if (v && VALID[S.unit].includes(v) && conf >= 55){
-          let cond = null;
-          if (c.kind === 'print'){
-            const pr = await readPlate(c);
-            cond = pr.cond;
-            pr.plates.forEach(pl => boxes.push(Object.assign({color:'#4ea1ff'}, pl)));
-          }
-          accept(v, conf, cond, c.kind === 'led');
-          if (Date.now() - zoneSeenAt < 1500){          // start of a 30 (or 20) zone: zones are always in towns
-            st.lastZone = v; if (!st.area.kind) st.area = {kind:'town', time:Date.now(), guessed:true};
-          }
-          boxes.push(Object.assign({color:'#3ddc84'}, c));
-          found.push({v, kind:c.kind, cond});
-        } else boxes.push(Object.assign({color:'#ffd166'}, c));
-      }
       drawBoxes(boxes);
       window.__signviewLast = {cands: cands.length, found};
     } catch(e){ console.warn('signview', e && e.message); }
     busy = false;
   }
-  setTimeout(loop, 80);          // (short pause: more frames per second means more chances to read each sign)
+  setTimeout(loop, hot ? 15 : 80);    // (short pause: more frames per second means more chances to read each sign)
 }
 
 /* ================= photo for checking (detection boxes on: tap the camera view) ================= */
