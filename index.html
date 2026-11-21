@@ -222,6 +222,7 @@
       <select id="setUnit"><option value="kmh">km/h</option><option value="mph">mph</option></select></label>
     <label class="row"><span>Warn when over by<small>In the units above</small></span>
       <input type="number" id="setTol" min="0" max="20" step="1"></label>
+    <label class="row"><span>Say the new limit out loud</span><input type="checkbox" id="setVoice"></label>
     <label class="row"><span>Warning beep</span><input type="checkbox" id="setSound"></label>
   </div>
   <div class="group">
@@ -249,7 +250,7 @@
 'use strict';
 
 /* ================= settings ================= */
-const DEFAULTS = {unit:'kmh', tol:3, sound:true, osm:true, debug:false, wet:'auto', vehicle:'car', country:'de'};
+const DEFAULTS = {unit:'kmh', tol:3, sound:true, voice:true, osm:true, debug:false, wet:'auto', vehicle:'car', country:'de'};
 function loadSettings(){
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('signview') || '{}')); }
   catch(e){ return Object.assign({}, DEFAULTS); }
@@ -286,6 +287,40 @@ let actx = null, lastBeep = 0;
 function unlockAudio(){
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)();
         if (actx.state === 'suspended') actx.resume(); } catch(e){}
+}
+/* Spoken announcements: say the new limit when it changes, so you don't need to look at the phone.
+   Changes that settle quickly (the same sign read twice, a plate read a moment later) are spoken once. */
+let voiceTimer = 0, lastSaid = '', lastSaidT = 0;
+function unlockVoice(){
+  // iPhone only lets a page speak after a tap: say nothing once, now, while handling the Start tap
+  try { if ('speechSynthesis' in window){ const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch(e){}
+}
+function phrase(lim){
+  if (!lim || lim.value == null) return '';
+  const unit = S.unit === 'mph' ? ' miles per hour' : '';
+  if (lim.value === Infinity) return 'No speed limit' + (st.area.kind === 'autobahn' ? ', 130 recommended' : '');
+  if (lim.src !== 'sign' && st.area.kind === 'calm' && lim.value <= inUnit(WALK)) return 'Walking pace';
+  let t = 'Speed limit ' + lim.value + unit;
+  if (lim.cond && lim.cond.type !== 'unknown') t += ', ' + condText(lim.cond);
+  if (lim.src === 'map') t += ', from map';
+  return t;
+}
+function announce(lim){
+  if (S.voice === false || !('speechSynthesis' in window)) return;
+  clearTimeout(voiceTimer);
+  voiceTimer = setTimeout(() => {
+    const now = currentLimit(), t = phrase(now);
+    if (!t || (t === lastSaid && Date.now() - lastSaidT < 30000)) return;
+    lastSaid = t; lastSaidT = Date.now();
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(t);
+      u.lang = 'en-GB'; u.rate = 1.05;
+      const v = speechSynthesis.getVoices().find(x => x.lang === 'en-GB') || speechSynthesis.getVoices().find(x => /^en/.test(x.lang));
+      if (v) u.voice = v;
+      speechSynthesis.speak(u);
+    } catch(e){}
+  }, 900);
 }
 function beep(){
   if (!S.sound || !actx) return;
@@ -505,6 +540,7 @@ function render(){
     const noLimit = lim.value === Infinity, walk = !noLimit && lim.src !== 'sign' && st.area.kind === 'calm';
     const key = signKey(lim);
     if (key !== lastShownKey){
+      if (lastShownKey) announce(lim);
       if (lastShownKey && st.lastLim){ st.history.unshift(historyItem(st.lastLim)); st.history = st.history.slice(0, 3); }
       lastShownKey = key;
       sign.classList.remove('fresh'); void sign.offsetWidth; sign.classList.add('fresh');
@@ -733,7 +769,7 @@ function findCandidates(){
   pctx.drawImage(video, 0, 0, PW, PH);
   const d = pctx.getImageData(0, 0, PW, PH).data;
   const N = PW * PH, red0 = new Uint8Array(N), light = new Uint8Array(N), dark = new Uint8Array(N), bright = new Uint8Array(N);
-  const yel = new Uint8Array(N), stripe = new Uint8Array(N), blue = new Uint8Array(N), mxa = new Uint8Array(N), mna = new Uint8Array(N);
+  const yel = new Uint8Array(N), stripe = new Uint8Array(N), blue = new Uint8Array(N), pink = new Uint8Array(N), mxa = new Uint8Array(N), mna = new Uint8Array(N);
   for (let i = 0, p = 0; i < N; i++, p += 4){
     const r = d[p], g = d[p+1], b = d[p+2];
     const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
@@ -750,6 +786,7 @@ function findCandidates(){
       if (mx < 150 && (mx - mn) < 0.3 * mx + 15) stripe[i] = 1;                                  // black/dark grey (grey in bright sun)
       if (b > 80 && r < 0.45 * b && g < 0.78 * b) blue[i] = 1;                                      // sign blue (not pale sky)
     }
+    if (r > 90 && r - (g > b ? g : b) > 20 && g - b < 0.45 * (r - b) && b - g < 0.6 * (r - g)) pink[i] = 1;                                           // washed-out red (end stripes on blue signs)
   }
   // close small gaps (LED rings are made of separate dots)
   const mask = new Uint8Array(N), mask0 = mask;
@@ -865,7 +902,7 @@ function findCandidates(){
   const sc = vw / PW;
   const signs = cands.sort((a, b) => b.size - a.size).slice(0, 3);
   return {signs, towns: S.country === 'de' ? findTownSigns(d, red0, yel, mxa, blue, light, PW, PH, sc) : [],
-          blues: S.country === 'de' ? findBlueSigns(red0, blue, light, PW, PH, sc) : [],
+          blues: S.country === 'de' ? findBlueSigns(pink, blue, light, PW, PH, sc) : [],
           ends: findEndSigns(red0, stripe, mxa, mna, PW, PH, sc).concat(findWhiteDiscs(red0, light, yel, PW, PH, sc)).slice(0, 2),
           others: others.filter((o, i) => !others.slice(0, i).some(q => Math.abs(q.x - o.x) < q.w / 2 && Math.abs(q.y - o.y) < q.h / 2)),
           zones: S.country === 'de' ? findZoneBoards(red0, light, mxa, PW, PH, sc) : []};
@@ -967,23 +1004,43 @@ function risingRedStripe(red0, W, b){
   return nl > area * 0.004 && nr > area * 0.004 && (yl / nl) - (yr / nr) > b.h * 0.2 && (nl + nr) / area < 0.3;
 }
 
+/* The end stripe seen by its shape when its colour is washed out: a band with no blue in it running the whole way
+   from the bottom-left corner to the top-right one, while the other diagonal crosses plenty of blue. */
+function diagonalBand(blue, W, b){
+  const along = (rising, off) => { let n = 0, k = 0;
+    for (let j = 2; j <= 27; j++){
+      const t = j / 29, x = Math.round(b.x0 + t * b.w + off), y = Math.round(rising ? b.y1 - t * b.h : b.y0 + t * b.h);
+      n++; if (!blue[y * W + x] && !blue[y * W + x + 1] && !blue[y * W + x - 1]) k++;
+    } return k / n; };
+  let rise = 0; for (let o = -2; o <= 2; o++) rise = Math.max(rise, along(true, o));
+  let fall = 0; for (let o = -2; o <= 2; o++) fall = Math.max(fall, along(false, o));
+  return rise >= 0.85 && fall <= 0.6;
+}
+
 /* Blue German signs with a white pictogram: Autobahn (330.1), Kraftfahrstraße (331.1),
    traffic-calmed area (325.1). The same sign with a red diagonal stripe marks the end. */
 function findBlueSigns(red0, blue, light, W, H, sc){
   const both = new Uint8Array(W * H);
   for (let i = 0; i < both.length; i++) both[i] = blue[i] | red0[i];
-  const out = [];
-  for (const b of blobs(both, W, H, 14, 10)){
+  const out = [], bothC = dilate(dilate(both, W, H), W, H);   // the red stripe of an end sign can split the blue in two
+  for (const b of blobs(bothC, W, H, 14, 10)){
     if (b.x0 === 0 || b.y0 === 0 || b.x1 === W - 1) continue;           // big blue areas running off-screen (sky)
-    const ar = b.w / b.h; if (ar < 0.75 || ar > 1.9 || b.w > W * 0.5) continue;
-    const bf = frac(blue, W, b.x0, b.y0, b.x1, b.y1); if (bf < 0.35) continue;
+    const ar = b.w / b.h;
+    if (S.debug && window.__D && b.w > 12) window.__D.push({s:'blue', x:b.x0, y:b.y0, w:b.w, h:b.h, ar:+ar.toFixed(2), bf:+frac(blue, W, b.x0, b.y0, b.x1, b.y1).toFixed(2),
+      wf:+frac(light, W, b.x0 + b.w * 0.1, b.y0 + b.h * 0.1, b.x1 - b.w * 0.1, b.y1 - b.h * 0.1).toFixed(2), both:+frac(both, W, b.x0, b.y0, b.x1, b.y1).toFixed(2), rd:+frac(red0, W, b.x0, b.y0, b.x1, b.y1).toFixed(3)});
+    if (ar < 0.75 || ar > 1.9 || b.w > W * 0.5) continue;
+    const bf = frac(blue, W, b.x0, b.y0, b.x1, b.y1);
+    if (bf < 0.22 || frac(both, W, b.x0, b.y0, b.x1, b.y1) < 0.28) continue;   // (blue plus the red end stripe)
     const cw = b.w * 0.12, ch = b.h * 0.12;
     const corners = [[b.x0, b.y0], [b.x1 - cw, b.y0], [b.x0, b.y1 - ch], [b.x1 - cw, b.y1 - ch]]
-      .map(([x, y]) => frac(both, W, x, y, x + cw, y + ch));
-    if (Math.min.apply(null, corners) < 0.5) continue;
+      .map(([x, y]) => frac(bothC, W, x, y, x + cw, y + ch));
     const wf = frac(light, W, b.x0 + b.w * 0.1, b.y0 + b.h * 0.1, b.x1 - b.w * 0.1, b.y1 - b.h * 0.1);
+    if (S.debug && window.__D) window.__D.push({s:'blue2', w:b.w, corners:corners.map(v => +v.toFixed(2)), wf:+wf.toFixed(2), end:risingRedStripe(red0, W, b), band:diagonalBand(blue, W, b)});
+    // all four corners blue, or, for an end sign, the two corners the stripe doesn't run through
+    const band = diagonalBand(blue, W, b);
+    if (Math.min.apply(null, corners) < 0.5 && !(band && corners[0] >= 0.25 && corners[3] >= 0.25)) continue;
     if (wf < 0.08 || wf > 0.55) continue;
-    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h, wide: ar > 1.3, end: risingRedStripe(red0, W, b)});
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, size:b.w * b.h, wide: ar > 1.3, end: risingRedStripe(red0, W, b) || band});
   }
   return out.sort((a, b) => b.size - a.size).slice(0, 1);
 }
@@ -1225,6 +1282,18 @@ function boxBlur(lum, W, H){
   return out;
 }
 
+/* Digits are strokes: two or three tall separate figures. A pictogram (the lorry of "no lorries", a car)
+   is one solid wide shape. If the reader returns a number from a solid wide shape, it's not a number. */
+function solidPictogram(crop){
+  const W = crop.width, H = crop.height, d = crop.getContext('2d').getImageData(0, 0, W, H).data, bin = new Uint8Array(W * H);
+  for (let i = 0, p = 0; i < W * H; i++, p += 4) bin[i] = d[p] < 128 ? 1 : 0;
+  const comps = components(bin, W, H).filter(k => k.n > 10);
+  if (!comps.length) return false;
+  const ink = comps.reduce((t, k) => t + k.n, 0), big = comps.sort((a, b) => b.n - a.n)[0];
+  const solid = big.n / (big.w * big.h), share = big.n / ink, wide = big.w / big.h;
+  if (S.debug && window.__D) window.__D.push({s:'shape', solid:+solid.toFixed(2), share:+share.toFixed(2), wide:+wide.toFixed(2), n:comps.length});
+  return share >= 0.65 && solid >= 0.8;          // digits measured at most ~0.7, the lorry 0.86 and more
+}
 async function readNumber(c){
   let res = await worker.recognize(prepareCrop(c, 0));
   let v = parseInt((res.data.text || '').replace(/\D/g, ''), 10);
@@ -1243,6 +1312,7 @@ async function readNumber(c){
       if (v && (v === first || v === second) && VALID[S.unit].includes(v) && conf < 55) conf = 60;
     }
   }
+  if (v && VALID[S.unit].includes(v) && conf >= 55 && solidPictogram(prepareCrop(c, 0))) { v = NaN; conf = 0; }
   // A single digit is usually a misread part of a blurred two-digit sign (5 km/h signs are rare): only take a very clear one.
   if (v < 10 && conf < 88) { v = NaN; conf = 0; }
   if (S.debug && window.__D) window.__D.push({s:'ocr', kind:c.kind, w:Math.round(c.w), text:res.data.text, conf:Math.round(conf)});
@@ -1668,6 +1738,8 @@ function accept(v, conf, cond, led){
   if (!sk || now - sk.last > 1500) st.seen[key] = {first:now, last:now}; else sk.last = now;
   const first = st.seen[key].first, samePost = t => t >= first - 1000;
   if (!(same >= 2 || conf >= 82)) return;
+  // 10 and 15 are rare and are what a 100 or 150 looks like when its last digit is cut off: need three clear reads
+  if (v <= inUnit(15) && !(same >= 3 && conf >= 75)) return;
   // a clear reading (high confidence, or the same value read several times) is kept even where map data disagrees
   const strong = conf >= 80 || same >= 3;
   const R = st.rule;
@@ -1744,7 +1816,16 @@ async function loop(){
         boxes.push(Object.assign({color: ok ? '#ff9f1c' : '#ffd166'}, t));
       }
       for (const bsign of found0.blues){
-        const kind = classifyBlue(bsign);
+        let kind = classifyBlue(bsign);
+        // An end sign (red stripe) whose pictogram is too cut up to read: it ends the area we're in.
+        if (!kind && bsign.end){
+          const k = st.area.kind;
+          kind = k === 'calm' || k === 'autobahn' || k === 'kfs' ? k :
+                 (st.lastLim && (st.lastLim.src === 'calm' || st.lastLim.value <= inUnit(30))) || bsign.wide ? 'calm' :
+                 // nothing to go on: slow means a residential street (end of a traffic-calmed area), fast means a main road
+                 !(st.speedMs > 45 / 3.6) ? 'calm' : null;
+        }
+        if (S.debug && window.__D) window.__D.push({s:'bluecls', kind, end:bsign.end, wide:bsign.wide});
         let ok = !!kind;
         if (ok && kind === 'calm'){    // make sure it isn't a blue sign with words on it
           pcan.width = bcan.width; pcan.height = bcan.height; plctx.drawImage(bcan, 0, 0);
@@ -1832,7 +1913,7 @@ $('camWrap').addEventListener('click', async () => {
 /* ================= start / settings UI ================= */
 async function start(){
   $('err').textContent = '';
-  unlockAudio(); keepAwake();
+  unlockAudio(); unlockVoice(); keepAwake();
   startLocation();
   try { await startCamera(); }
   catch(e){
@@ -1849,7 +1930,7 @@ async function start(){
 $('startBtn').onclick = start;
 
 function openSettings(){
-  $('setUnit').value = S.unit; $('setTol').value = S.tol; $('setSound').checked = S.sound; $('setWet').value = S.wet; $('setCountry').value = S.country;
+  $('setUnit').value = S.unit; $('setTol').value = S.tol; $('setSound').checked = S.sound; $('setVoice').checked = S.voice !== false; $('setWet').value = S.wet; $('setCountry').value = S.country;
   $('setOsm').checked = S.osm; $('setDebug').checked = S.debug;
   $('settingsSheet').hidden = false;
 }
@@ -1858,7 +1939,7 @@ $('startSettingsBtn').onclick = openSettings;
 $('closeSettings').onclick = () => { $('settingsSheet').hidden = true; };
 $('saveSettings').onclick = () => {
   const unitChanged = $('setUnit').value !== S.unit;
-  S = {unit:$('setUnit').value, tol:Math.max(0, +$('setTol').value || 0), sound:$('setSound').checked, wet:$('setWet').value, vehicle:'car', country:$('setCountry').value,
+  S = {unit:$('setUnit').value, tol:Math.max(0, +$('setTol').value || 0), sound:$('setSound').checked, voice:$('setVoice').checked, wet:$('setWet').value, vehicle:'car', country:$('setCountry').value,
        osm:$('setOsm').checked, debug:$('setDebug').checked};
   saveSettings(S);
   $('settingsSheet').hidden = true;
