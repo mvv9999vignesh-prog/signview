@@ -152,6 +152,10 @@
   .group h3{font-size:15px;font-weight:600;color:var(--muted);padding:12px 0 0}
   label.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;font-size:18px}
   label.row + label.row{border-top:1px solid var(--kerb)}
+  div.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;font-size:18px}
+  div.row b{white-space:nowrap;font-size:18px;text-align:right}
+  div.row b small{display:block;color:var(--muted);font-size:14px;font-weight:500}
+  div.row span small{display:block;color:var(--muted);font-size:14px;margin-top:3px;line-height:1.3}
   label.row span small{display:block;color:var(--muted);font-size:14px;margin-top:3px;line-height:1.3}
   select,input[type=number]{background:var(--asphalt);color:var(--line);border:1px solid var(--kerb);border-radius:9px;padding:8px 10px;font-size:17px}
   input[type=number]{width:72px}
@@ -159,7 +163,7 @@
   input[type=checkbox]::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:#fff;transition:transform .2s}
   input[type=checkbox]:checked{background:#3f9a52} input[type=checkbox]:checked::after{transform:translateX(20px)}
   .sheetbar{display:flex;gap:10px;margin-top:auto;padding:16px 0 4px;position:sticky;bottom:0;background:var(--asphalt)}
-  .sheetbar .btn{margin-top:0}
+  .sheetbar .btn{margin-top:0;flex:1 1 0;width:auto;min-width:0}
 </style>
 </head>
 <body>
@@ -245,6 +249,10 @@
       While on, tap the camera picture to save a photo for checking.</small></span>
       <input type="checkbox" id="setDebug"></label>
   </div>
+  <div class="group">
+    <div class="row"><span>App version<small>Changes with every update. If it hasn't changed after an upload, close the page and open it again.</small></span>
+      <b id="appVersion"></b></div>
+  </div>
   <div class="sheetbar">
     <button class="btn secondary" id="closeSettings">Cancel</button>
     <button class="btn" id="saveSettings">Save</button>
@@ -253,6 +261,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script>
+// Raise this with every update (shown in Settings)
+const APP_VERSION = '2.0', APP_DATE = '25 Nov 2026';
 (() => {
 'use strict';
 
@@ -267,6 +277,7 @@ let S = loadSettings();
 S.vehicle = 'car';   // this app is set up for a car without a trailer
 
 const $ = id => document.getElementById(id);
+{ const v = $('appVersion'); if (v){ v.textContent = APP_VERSION; const d = document.createElement('small'); d.textContent = APP_DATE; v.appendChild(d); } }
 const VALID = {
   kmh:[5,10,15,20,25,30,40,50,60,70,80,90,100,110,120,130],
   mph:[10,15,20,30,40,50,60,70]
@@ -290,16 +301,23 @@ window.__signviewState = st;
 window.__signviewTest = {};
 
 /* ================= audio ================= */
-let actx = null, lastBeep = 0;
+// Play along with music from another app instead of stopping it: an "ambient" page mixes its sounds in
+// (iPhone with iOS 17 or later; Android doesn't stop music for a page's sounds anyway).
+function setAudioSession(type){ try { if (navigator.audioSession) navigator.audioSession.type = type; } catch(e){} }
+setAudioSession('ambient');
+let actx = null, lastBeep = 0, actxIdle = 0;
 function unlockAudio(){
+  if (!S.sound) return;                 // (no beeps wanted: don't open an audio channel at all)
   try { actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-        if (actx.state === 'suspended') actx.resume(); } catch(e){}
+        if (actx.state === 'suspended') actx.resume();
+        clearTimeout(actxIdle); actxIdle = setTimeout(() => { try { actx.suspend(); } catch(e){} }, 1000); } catch(e){}
 }
 /* Spoken announcements: say the new limit when it changes, so you don't need to look at the phone.
    Changes that settle quickly (the same sign read twice, a plate read a moment later) are spoken once. */
 let voiceTimer = 0, lastSaid = '', lastSaidT = 0;
 function unlockVoice(){
   // iPhone only lets a page speak after a tap: say nothing once, now, while handling the Start tap
+  if (S.voice === false) return;
   try { if ('speechSynthesis' in window){ const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } } catch(e){}
 }
 function phrase(lim){
@@ -325,14 +343,21 @@ function announce(lim){
       u.lang = 'en-GB'; u.rate = 1.05;
       const v = speechSynthesis.getVoices().find(x => x.lang === 'en-GB') || speechSynthesis.getVoices().find(x => /^en/.test(x.lang));
       if (v) u.voice = v;
+      // turn the music down while speaking, and back up afterwards (instead of stopping it)
+      setAudioSession('transient');
+      u.onend = u.onerror = () => setAudioSession('ambient');
       speechSynthesis.speak(u);
     } catch(e){}
   }, 900);
 }
 function beep(){
-  if (!S.sound || !actx) return;
+  if (!S.sound) return;
   const now = performance.now(); if (now - lastBeep < 4000) return; lastBeep = now;
   try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    // (the audio channel is only open for the beep itself: a page holding it open can pause other apps' music)
+    if (actx.state === 'suspended') actx.resume();
+    clearTimeout(actxIdle); actxIdle = setTimeout(() => { try { actx.suspend(); } catch(e){} }, 1000);
     [0, 0.18].forEach(off => {
       const o = actx.createOscillator(), g = actx.createGain();
       o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(actx.destination);
@@ -965,11 +990,29 @@ function redStripeFit(red0, W, b){
   const rms = Math.sqrt(res / n);
   return a < -0.2 && a > -1.8 && rms < 0.09 && maxx - minx > 0.5;
 }
-function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
-  const both = new Uint8Array(W * H);
-  for (let i = 0; i < both.length; i++) both[i] = yel[i] | red0[i];   // the red stripe can split the yellow in two
+// A town exit sign seen small (often on the left, the back of the oncoming traffic's entry sign): at the processing
+// size its thin red stripe blurs into the yellow, and video compression turns it orange. Look again at the camera's
+// full resolution, counting orange-red as well as red.
+const hiCan = document.createElement('canvas'), hiCtx = hiCan.getContext('2d', {willReadFrequently:true});
+function hiresStripe(b, sc){
+  const x = b.x0 * sc, y = b.y0 * sc, w = b.w * sc, h = b.h * sc;
+  const k = Math.min(1, 200 / w), W = Math.max(8, Math.round(w * k)), H = Math.max(6, Math.round(h * k));
+  hiCan.width = W; hiCan.height = H; hiCtx.drawImage(video, x, y, w, h, 0, 0, W, H);
+  const d = hiCtx.getImageData(0, 0, W, H).data, m = new Uint8Array(W * H);
+  for (let i = 0, p = 0; i < W * H; i++, p += 4){ const r = d[p], g = d[p+1], bl = d[p+2];
+    if (r > 50 && bl < 0.45 * r && g < 0.64 * r) m[i] = 1; }        // traffic yellow has green at about 0.8 of red (also in shade)
+  return redStripeFit(m, W, {x0:0, y0:0, x1:W - 1, y1:H - 1, w:W, h:H});
+}
+function findTownSigns(d, red0, yel0, mxa, blue, light, W, H, sc){
+  // (a town sign in deep shade is darker than traffic yellow, but keeps its hue: strongly yellow, almost no blue)
+  const yel = new Uint8Array(W * H), both = new Uint8Array(W * H);
+  for (let i = 0, p = 0; i < both.length; i++, p += 4){
+    const r = d[p], g = d[p+1], b = d[p+2];
+    yel[i] = yel0[i] || (r > 70 && g >= 0.62 * r && g <= 0.92 * r && b < 0.4 * r) ? 1 : 0;
+    both[i] = yel[i] | red0[i];                                       // the red stripe can split the yellow in two
+  }
   const out = [];
-  for (const b of blobs(both, W, H, 20, 8)){
+  for (const b of blobs(both, W, H, 11, 7)){
     const ar = b.w / b.h; if (ar < 0.9 || ar > 3.8 || b.w > W * 0.7) continue;     // (seen from the side a town sign looks narrower)
     const yf = frac(yel, W, b.x0, b.y0, b.x1, b.y1); if (yf < 0.35 || yf > 0.97) continue;
     // all four corners yellow: a rectangle, not a yellow arrow-shaped direction sign
@@ -995,7 +1038,9 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
     for (let y = b.y0; y <= b.y1; y++) for (let x = b.x0; x <= b.x1; x++) if (red0[y * W + x]){
       if (x < mid){ nl++; yl += y; } else { nr++; yr += y; } }
     const area = b.w * b.h, rf = (nl + nr) / area;
-    const end = rf < 0.3 && redStripeFit(red0, W, b);
+    let end = rf < 0.3 && redStripeFit(red0, W, b), hires = false;
+    if (!end && rf < 0.3 && b.w < 48){ end = hires = hiresStripe(b, sc); }
+    if (b.w < 20 && !end) continue;                 // (smaller than that, only an exit sign's stripe is worth a look)
     // Two separate boards one above the other (direction signs): a band of background across the middle.
     let gap = false;
     for (let y = b.y0 + Math.round(b.h * 0.25); y <= b.y1 - Math.round(b.h * 0.25) && !gap; y++){
@@ -1013,7 +1058,7 @@ function findTownSigns(d, red0, yel, mxa, blue, light, W, H, sc){
     if (S.debug && window.__D) window.__D.push({s:'townchk', w:b.w, h:b.h, yf:+yf.toFixed(2), df:+df.toFixed(2), end, rf:+rf.toFixed(3),
       blue:+frac(blue, W, b.x0, b.y0, b.x1, b.y1).toFixed(3), lightIn:+frac(light, W, b.x0 + ix, b.y0 + iy, b.x1 - ix, b.y1 - iy).toFixed(3)});
     if (!end && (frac(blue, W, b.x0, b.y0, b.x1, b.y1) > 0.008 || frac(light, W, b.x0 + ix, b.y0 + iy, b.x1 - ix, b.y1 - iy) > 0.04)) continue;
-    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, size:area});
+    out.push({x:b.x0 * sc, y:b.y0 * sc, w:b.w * sc, h:b.h * sc, end, hires, size:area});
   }
   return out.sort((a, b) => b.size - a.size).slice(0, 1);
 }
@@ -1568,6 +1613,8 @@ function parsePlateText(raw){
   if (/\b[z2]?[o0]n[e3]\b|\bzon|\b[zl2][ou0q][nm][elil3]\b/.test(t)){ zoneSeenAt = Date.now(); return {type:'zone'}; }      // Tempo-30-Zone sign (274.1): not a condition
   return mergeConds([parseVehicle(t), parseOther(t)]);
 }
+// words on plates that only give a reason; also as the reader often gets "Lärmschutz" ("larmschutz", "rmschutz", "schutz")
+const REASON = /l[aä]rm|rmsch|schutz|schul|kinder|kita|altenheim|senior|unfall|sch[aä]den|luft|abgas|baustelle|krankenh|spielend|fu[sß]g[aä]ng|radfahr|noise|school/;
 function parseOther(t){
   if (/n[aä]ss|wet|rain|regen|pluie|\bnat\b|nedb/.test(t)) return {type:'wet'};
   if (/schnee|gl[aä]tte|\beis|snow|\bice\b|neige|verglas/.test(t)) return {type:'ice'};
@@ -1578,11 +1625,16 @@ function parseOther(t){
   else if (/werktag/.test(t)) days = [1, 2, 3, 4, 5, 6];              // "werktags" = Monday to Saturday
   // one or more time windows, e.g. "6-22h", "7-9h 16-18h", "6.30-18 h"
   const ranges = [], re = /(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?\s*(h|uhr)?/g;
-  let tm;
+  let tm, withH = false;
   while ((tm = re.exec(t))){
     const h1 = +tm[1], m1 = +(tm[2] || 0), h2 = +tm[3], m2 = +(tm[4] || 0);
-    if (h1 <= 24 && h2 <= 24 && m1 < 60 && m2 < 60 && !(h1 === h2 && m1 === m2)) ranges.push([(h1 % 24) * 60 + m1, (h2 % 24) * 60 + m2]);
+    if (h1 <= 24 && h2 <= 24 && m1 < 60 && m2 < 60 && !(h1 === h2 && m1 === m2)){ ranges.push([(h1 % 24) * 60 + m1, (h2 % 24) * 60 + m2]); if (tm[5]) withH = true; }
   }
+  // A reason plate ("Lärmschutz", "Schule"…) read with a few stray digits is still a reason plate: only a time
+  // marked with "h" or "Uhr" ("Lärmschutz 22-6 h") makes it a time window.
+  if (ranges.length && !withH && REASON.test(t)) return {type:'info'};
+  // no real plate covers (almost) the whole day ("2-1" is a misread): unreadable, so the limit is applied to be safe
+  if (ranges.some(([f, e]) => ((e - f + 1440) % 1440) > 20 * 60)) return {type:'unknown'};
   if (ranges.length) return {type:'time', from:ranges[0][0], to:ranges[0][1], ranges, days: days || undefined};
   if (days) return {type:'days', days};
   // "auf 2 km": the limit applies for that distance. "300 m" / "in 300 m": it starts that far ahead.
@@ -1591,8 +1643,7 @@ function parseOther(t){
   m = t.match(/^\s*(?:in|nach)?\s*(\d+(?:[.,]\d+)?)\s*(km|m)\s*$/);
   if (m) return {type:'ahead', m: parseFloat(m[1].replace(',', '.')) * (m[2] === 'km' ? 1000 : 1)};
   // Plates that only give a reason (noise protection, school, children, road damage…): the limit applies at all times.
-  if (/l[aä]rm|schul|kinder|kita|altenheim|senior|unfall|sch[aä]den|luft|abgas|baustelle|krankenh|spielend|fu[sß]g[aä]ng|radfahr|noise|school/.test(t))
-    return {type:'info'};
+  if (REASON.test(t)) return {type:'info'};
   return null;
 }
 
@@ -1755,12 +1806,15 @@ function liveExtras(){
 }
 
 /* Town entered/left, or end-of-limit sign: these reset the limit to the general one. */
-function areaEvent(kind){
+function areaEvent(kind, clear){
   const now = Date.now(), key = 'area:' + kind;
   st.reads = st.reads.filter(r => now - r.t < 5000);
   st.reads.push({key, t:now, conf:0});
-  // (an end sign needs three sightings: white walls and window frames with a diagonal shadow can pass once or twice)
-  if (st.reads.filter(r => r.key === key).length < (kind === 'end' ? 3 : 2)) return;
+  // (an end sign needs three sightings: white walls and window frames with a diagonal shadow can pass once or twice;
+  //  a clearly striped town exit sign while in a town needs only one: it often stands on the left, where it is in
+  //  view for a moment only, or a passing car hides it)
+  const need = kind === 'end' ? 3 : kind === 'out' && clear && st.area.kind === 'town' ? 1 : 2;
+  if (st.reads.filter(r => r.key === key).length < need) return;
   const R = st.rule;
   // a speed sign mounted on the same post as the town sign wins over the general limit
   const keepSign = R.base && (R.base.src || 'sign') === 'sign' && now - R.base.time < 1500;
@@ -1831,7 +1885,7 @@ function confirmLoneReads(){
     const rival = st.reads.some(o => o !== r && o.key.split('|')[0] !== v && Math.abs(o.t - r.t) < 2500);
     const frames = candTimes.filter(t => Math.abs(t - r.t) < 1500).length;
     r.pending = false;
-    if (!rival && frames >= 3) accept(+v, r.conf, r.cond, r.led);   // (the earlier read plus this one: two sightings)
+    if (!rival && frames >= 2) accept(+v, r.conf, r.cond, r.led);   // (the earlier read plus this one: two sightings)
   }
 }
 function accept(v, conf, cond, led, confirmedByWeak){
@@ -1882,6 +1936,10 @@ function accept(v, conf, cond, led, confirmedByWeak){
            if (st.area.kind === 'town' && v >= inUnit(70)) st.area = {kind:'rural', time:now, guessed:true}; }
     R.conds = R.conds.filter(c => samePost(c.time));              // a new plain limit replaces everything before it
   } else {
+    // A sign already read clearly several times without a plate: one read with a plate is more likely a misread
+    // plate (blurred "Lärmschutz" taken for a lorry) than a plate that has just come into view. Wait for a second one.
+    if (R.base && R.base.value === v && now - R.base.time < 6000 && R.base.strong && cond.type !== 'unknown' &&
+        st.reads.filter(r => r.key === key).length < 2){ R.base.time = now; render(); return; }
     // The plate was too small to see on earlier reads: this sign was taken as a plain limit. Undo that.
     if (R.base && R.base.value === v && now - R.base.time < 6000){
       // (if the plate can't be read and there's nothing before it to fall back to, keep showing the sign)
@@ -1970,10 +2028,11 @@ async function loop(){
         }
       }
       for (const t of found0.towns){
-        const read = await readTownText(t);
-        const ok = looksLikeTownName(read, t.end);
+        // (a small exit sign is too small to read: its stripe on the yellow board is enough, no time spent on its lettering)
+        const read = t.end && t.w < 120 ? {text:'', bands:[], H:0, ar:0} : await readTownText(t);
+        const ok = (t.end && t.w < 120) || looksLikeTownName(read, t.end);
         if (S.debug && window.__D) window.__D.push({s:'townread', text:read.text, bands:read.bands.map(b => [b.h, +b.left.toFixed(2), +b.right.toFixed(2)]), H:read.H, ok});
-        if (ok){ areaEvent(t.end ? 'out' : 'in'); found.push({town: t.end ? 'out' : 'in', text: read.text}); }
+        if (ok){ areaEvent(t.end ? 'out' : 'in', t.end && !t.hires); found.push({town: t.end ? 'out' : 'in', text: read.text}); }
         boxes.push(Object.assign({color: ok ? '#ff9f1c' : '#ffd166'}, t));
       }
       for (const bsign of found0.blues){
@@ -2062,7 +2121,7 @@ async function start(){
   startLocation();
   try { await startCamera(); }
   catch(e){
-    $('err').textContent = 'Camera could not start (' + (e.name || e) + '). On iPhone, open this page in Safari over https and allow Camera.';
+    $('err').textContent = 'Camera could not start (' + (e.name || e) + '). Allow camera access for this page in your browser settings (on iPhone, use Safari).';
     return;
   }
   $('startSheet').hidden = true;
